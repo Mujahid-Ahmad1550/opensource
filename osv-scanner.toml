@@ -1,0 +1,108 @@
+# OSV-Scanner allow-list — auto-loaded by the Supply Chain CI gate
+# (.github/workflows/osv-scanner.yml) when it scans bun.lock, Cargo.lock and
+# the two uv.lock files.
+#
+# The gate blocks on ANY known-vulnerable or malicious dependency. When a finding
+# has no available fix (e.g. an unpatched transitive advisory), add a justified,
+# time-boxed entry here so unrelated PRs aren't blocked. Always prefer FIXING
+# (bump the dependency, or pin it via `overrides` in package.json) over ignoring.
+# Keep this list short and re-review entries when their date passes.
+#
+# Two mechanisms, and the reason to reach for each:
+#
+#   [[IgnoredVulns]] silences ONE advisory by id, and is what everything below
+#   uses. It is the narrowest thing that works: any OTHER advisory against the
+#   same package still blocks, including a newly FIXABLE one — which is the
+#   signal worth keeping, because a fixable finding is one we would act on.
+#
+#   [[PackageOverrides]] silences every advisory against a package, and is
+#   deliberately NOT used here. It also suppresses fixable findings, so it costs
+#   exactly the signal above; see SECURITY.md for the narrow case that justifies
+#   it and the conditions attached. Note the different date key there —
+#   `effectiveUntil`, not `ignoreUntil`.
+#
+# The scanner matches aliases, so ONE id per advisory is enough — listing a
+# PYSEC id alongside its GHSA alias just produces an "unused ignores" warning.
+#
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# ignoreUntil = 2026-07-01
+# reason = "No upstream fix yet; transitive via <pkg>; not reachable in our usage. Re-review by 2026-07-01."
+
+# ---------------------------------------------------------------------------
+# chromadb 1.1.1 — four advisories, none with a fixed version.
+#
+# Shared justification for all four entries below:
+#
+#   chromadb is transitive via crewai and appears only in sdk/python/uv.lock,
+#   the dev/test lockfile that pins every extra so CI can exercise the adapters.
+#   No fixed version exists for any of them — OSV reports "0 vulnerabilities can
+#   be fixed" and an empty FIXED VERSION — so there is nothing to bump to.
+#
+#   `pip install failproofai-sdk` never brings chromadb: the SDK declares NO
+#   unconditional dependencies (every Requires-Dist in the built wheel is gated
+#   behind an extra, and CI installs it with --no-deps). It reaches a user only
+#   through the SUPPORTED `failproofai-sdk[crewai]` extra, which installs CrewAI
+#   — and CrewAI declares chromadb itself, so that user has it from CrewAI
+#   whether or not they came via us. We do not add exposure; we also do not
+#   pretend the path is unreachable.
+#
+#   Because that install path IS supported, these stay id-scoped rather than a
+#   package-wide override: a fifth advisory — and in particular a FIXABLE one —
+#   must still turn this gate red so we bump the lockfile and can tell users of
+#   the extra. Accepting four unfixable findings is not the same as opting out
+#   of the package.
+#
+#   Re-review by 2026-11-20, by which point either chromadb has a patched
+#   release or crewai has moved off it.
+#
+# A note on how these arrive, because it is not what it looks like: three of the
+# four were published in June and only began matching this lockfile when their
+# OSV records were MODIFIED on 2026-08-24. Advisories surface late as metadata
+# is refreshed, so the gate can go red on a PR that changed nothing — that is
+# the mechanism to expect here, not a stream of fresh disclosures.
+# ---------------------------------------------------------------------------
+
+[[IgnoredVulns]]
+id = "GHSA-f4j7-r4q5-qw2c"
+ignoreUntil = 2026-11-20
+reason = "chromadb 1.1.1 (published 2026-05-18, alias PYSEC-2026-311). No fixed version. Transitive via crewai, dev/test lockfile only; see the shared justification above. Re-review by 2026-11-20."
+
+[[IgnoredVulns]]
+id = "GHSA-2wm9-hf6c-p5cr"
+ignoreUntil = 2026-11-20
+reason = "chromadb 1.1.1 (published 2026-06-12, surfaced 2026-08-24). No fixed version. Transitive via crewai, dev/test lockfile only; see the shared justification above. Re-review by 2026-11-20."
+
+[[IgnoredVulns]]
+id = "GHSA-36p7-vc44-83pf"
+ignoreUntil = 2026-11-20
+reason = "chromadb 1.1.1 (published 2026-06-12, surfaced 2026-08-24). No fixed version. Transitive via crewai, dev/test lockfile only; see the shared justification above. Re-review by 2026-11-20."
+
+[[IgnoredVulns]]
+id = "GHSA-xph7-9rjv-w5fr"
+ignoreUntil = 2026-11-20
+reason = "chromadb 1.1.1 (published 2026-06-12, surfaced 2026-08-24). No fixed version. Transitive via crewai, dev/test lockfile only; see the shared justification above. Re-review by 2026-11-20."
+
+# ---------------------------------------------------------------------------
+# nltk 3.10.3 — one advisory, no fixed version.
+#
+# Surfaced 2026-09-03 against an already-approved PR, which is the case this
+# file exists for: nothing on the branch introduced it, and nothing on the
+# branch can resolve it.
+#
+# nltk is transitive via llama-index-core and appears only in
+# sdk/python/uv.lock, the dev/test lockfile that pins every extra so CI can
+# exercise the adapters. The SDK's own runtime dependency list is empty — the
+# `llamaindex` extra is opt-in and the integration module imports it lazily —
+# so nltk reaches no shipped code path. OSV reports "0 vulnerabilities can be
+# fixed" and an empty FIXED VERSION, so there is nothing to bump to; the only
+# alternative is dropping the llamaindex extra and the adapter tests with it.
+#
+# Same re-review date as the chromadb entries above, so the whole list is
+# revisited in one pass.
+# ---------------------------------------------------------------------------
+
+[[IgnoredVulns]]
+id = "GHSA-8mgp-746c-j5xp"
+ignoreUntil = 2026-11-20
+reason = "nltk 3.10.3 (surfaced 2026-09-03, CVSS 8.3). No fixed version. Transitive via llama-index-core, dev/test lockfile only; the SDK ships zero runtime dependencies. Re-review by 2026-11-20."

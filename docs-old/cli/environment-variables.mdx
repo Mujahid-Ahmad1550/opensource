@@ -1,0 +1,75 @@
+---
+title: Environment variables
+description: "Configure failproofai behavior with environment variables"
+---
+
+## Dashboard
+
+| Variable | Description |
+|----------|-------------|
+| `PORT` | Dashboard port (default: `8020`) |
+| `CLAUDE_PROJECTS_PATH` | Override where Claude Code project folders are found |
+| `FAILPROOFAI_DISABLE_PAGES=policies,projects` | Comma-separated dashboard pages to hide |
+| `FAILPROOFAI_ALLOWED_DEV_ORIGINS` | Hosts/IPs allowed to access dev resources. Same as `--allowed-origins`. |
+
+## Logging
+
+| Variable | Description |
+|----------|-------------|
+| `FAILPROOFAI_LOG_LEVEL=info\|warn\|error` | Server log level (default: `warn`) |
+| `FAILPROOFAI_HOOK_LOG_FILE` | Custom hook log file path, or `true` for default (`~/.failproofai/logs/hooks.log`) |
+
+## Telemetry
+
+failproofai reports anonymous usage telemetry by default. There are two ways to
+turn it off, and they resolve to whichever is more restrictive — an environment
+variable can never re-enable something the config file switched off.
+
+| Variable | Description |
+|----------|-------------|
+| `FAILPROOFAI_TELEMETRY_DISABLED=1` | Disable anonymous usage telemetry for this process |
+
+To disable it permanently for the machine, add this to `~/.failproofai/config.json`:
+
+```json
+{
+  "telemetry": {
+    "enabled": false
+  }
+}
+```
+
+<Note>
+The config file is the option to use if you run the **failproofaid daemon**.
+The daemon is a system-scope service, and its environment does not include
+variables exported from your shell — so `FAILPROOFAI_TELEMETRY_DISABLED` cannot
+reach it. `[telemetry] enabled = false` is read by both the CLI and the daemon.
+</Note>
+
+The daemon reports its own **lifecycle** only: that it started (and whether the
+previous run exited cleanly), that it stopped, when its evaluation worker was
+spawned or restarted, when a collector task failed, and the outcome of a
+cloud-policy pull. These carry low-cardinality values and counts — never a file
+path, a command, a policy, a prompt, or anything read out of a transcript. There
+is no per-tool-call event.
+
+## Authentication
+
+| Variable | Description |
+|----------|-------------|
+| `FAILPROOF_API_URL` | Override the api-server base URL used by the dashboard auth dialog. Defaults to `https://api.befailproof.ai`; set to `http://localhost:8080` (or wherever) when running a local api-server. |
+| `FAILPROOFAI_AUTH_DIR` | Override where `auth.json` is stored (default: `~/.failproofai`). Mostly useful for isolated tests. |
+
+## First-run prompt
+
+| Variable | Description |
+|----------|-------------|
+| `FAILPROOFAI_NO_FIRST_RUN=1` | Skip the prompt that offers to install policies on the first bare `failproofai` invocation |
+
+## LLM (for policy evaluation)
+
+| Variable | Description |
+|----------|-------------|
+| `FAILPROOFAI_LLM_BASE_URL` | LLM API endpoint (default: `https://api.openai.com/v1`) |
+| `FAILPROOFAI_LLM_API_KEY` | API key for LLM-powered policies |
+| `FAILPROOFAI_LLM_MODEL` | Model name (default: `gpt-4o-mini`) |

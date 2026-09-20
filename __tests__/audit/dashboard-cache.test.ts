@@ -1,0 +1,198 @@
+// @vitest-environment node
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  readDashboardCache,
+  readDashboardCacheMeta,
+  writeDashboardCache,
+  isCacheStale,
+  DASHBOARD_CACHE_SCHEMA_VERSION,
+} from "../../src/audit/dashboard-cache";
+import type { AuditResult } from "../../src/audit/types";
+import { auditDashboardFile, auditDir } from "../../src/hooks/fp-home";
+
+const FAKE_RESULT: AuditResult = {
+  version: 2,
+  scannedAt: "2026-05-26T00:00:00.000Z",
+  scope: { cli: ["claude"], projects: "all", since: null },
+  transcripts: { scanned: 5, skipped: 0, errors: 0, durationMs: 100 },
+  results: [],
+  totals: { hits: 0, projectsWithHits: 0 },
+  projectsScanned: ["/home/u/a", "/home/u/b"],
+  eventsScanned: 42,
+  enabledBuiltinNames: ["block-failproofai-commands"],
+};
+
+describe("dashboard cache", () => {
+  let tmpHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    // Redirect homedir() to a tmp directory by overriding HOME — os.homedir()
+    // reads it on every call on POSIX, so the dashboard-cache module sees
+    // our tmp path without needing module mocks.
+    tmpHome = mkdtempSync(join(tmpdir(), "fpa-audit-cache-test-"));
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpHome;
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("returns null when no cache file exists", () => {
+    expect(readDashboardCache()).toBeNull();
+  });
+
+  it("round-trips a written entry", () => {
+    writeDashboardCache({ since: "7d" }, FAKE_RESULT);
+    const entry = readDashboardCache();
+    expect(entry).not.toBeNull();
+    expect(entry?.params).toEqual({ since: "7d" });
+    expect(entry?.result.transcripts.scanned).toBe(5);
+    expect(entry?.result.projectsScanned).toEqual(["/home/u/a", "/home/u/b"]);
+    expect(typeof entry?.cachedAt).toBe("string");
+  });
+
+  it("writes mode 0600 on the file", () => {
+    writeDashboardCache({}, FAKE_RESULT);
+    const cachePath = auditDashboardFile(tmpHome);
+    expect(existsSync(cachePath)).toBe(true);
+    const mode = statSync(cachePath).mode & 0o777;
+    // Some filesystems (FAT, etc.) can't honor mode bits perfectly — just
+    // assert no world-readable bit is set.
+    expect(mode & 0o004).toBe(0);
+  });
+
+  it("returns null for a corrupt JSON cache file", () => {
+    const dir = auditDir(tmpHome);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(auditDashboardFile(tmpHome), "{ not json", "utf-8");
+    expect(readDashboardCache()).toBeNull();
+  });
+
+  it("returns null when shape is wrong", () => {
+    const dir = auditDir(tmpHome);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(auditDashboardFile(tmpHome), JSON.stringify({ foo: 1 }), "utf-8");
+    expect(readDashboardCache()).toBeNull();
+  });
+
+  it("isCacheStale returns true past the threshold", () => {
+    const old = new Date(Date.now() - 60 * 60_000).toISOString(); // 1 hour ago
+    expect(isCacheStale(old, 30)).toBe(true);
+  });
+
+  it("isCacheStale returns false within the threshold", () => {
+    const recent = new Date(Date.now() - 10 * 60_000).toISOString(); // 10 min ago
+    expect(isCacheStale(recent, 30)).toBe(false);
+  });
+
+  it("isCacheStale treats unparseable timestamps as stale", () => {
+    expect(isCacheStale("not-a-date")).toBe(true);
+  });
+
+  it("rejects entries older than the 7-day TTL", () => {
+    const dir = auditDir(tmpHome);
+    mkdirSync(dir, { recursive: true });
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString();
+    writeFileSync(
+      auditDashboardFile(tmpHome),
+      JSON.stringify({
+        schemaVersion: DASHBOARD_CACHE_SCHEMA_VERSION,
+        cachedAt: eightDaysAgo,
+        params: { since: "30d" },
+        result: FAKE_RESULT,
+      }),
+      "utf-8",
+    );
+    expect(readDashboardCache()).toBeNull();
+  });
+
+  it("accepts entries inside the 7-day TTL", () => {
+    const dir = auditDir(tmpHome);
+    mkdirSync(dir, { recursive: true });
+    const sixDaysAgo = new Date(Date.now() - 6 * 24 * 60 * 60_000).toISOString();
+    writeFileSync(
+      auditDashboardFile(tmpHome),
+      JSON.stringify({
+        schemaVersion: DASHBOARD_CACHE_SCHEMA_VERSION,
+        cachedAt: sixDaysAgo,
+        params: { since: "30d" },
+        result: FAKE_RESULT,
+      }),
+      "utf-8",
+    );
+    expect(readDashboardCache()).not.toBeNull();
+  });
+
+  it("readDashboardCacheMeta returns cachedAt even when the entry is expired", () => {
+    const dir = auditDir(tmpHome);
+    mkdirSync(dir, { recursive: true });
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString();
+    writeFileSync(
+      auditDashboardFile(tmpHome),
+      JSON.stringify({
+        schemaVersion: DASHBOARD_CACHE_SCHEMA_VERSION,
+        cachedAt: eightDaysAgo,
+        params: { since: "30d" },
+        result: FAKE_RESULT,
+      }),
+      "utf-8",
+    );
+    expect(readDashboardCache()).toBeNull();
+    // The counts ride along with the timestamp, past the TTL. That separation
+    // is the point: `readDashboardCache` dropping an aged entry is right for
+    // rendering results and exactly backwards for /settings' LAST SCAN and
+    // FINDINGS stats, whose whole subject is that the scan was a while ago.
+    expect(readDashboardCacheMeta()).toEqual({
+      cachedAt: eightDaysAgo,
+      findings: 0,
+      sessionsScanned: 5,
+      eventsScanned: 42,
+    });
+  });
+
+  it("readDashboardCacheMeta reads the counts off the cached result", () => {
+    writeDashboardCache(
+      { since: "all" },
+      { ...FAKE_RESULT, totals: { hits: 17, projectsWithHits: 3 } },
+    );
+    const meta = readDashboardCacheMeta();
+    expect(meta?.findings).toBe(17);
+    expect(meta?.sessionsScanned).toBe(5);
+    expect(meta?.eventsScanned).toBe(42);
+  });
+
+  it("readDashboardCacheMeta reports an unreadable count as null, never as zero", () => {
+    // 0 means "scanned, found nothing"; null means "we could not read it".
+    // Collapsing them would report a clean machine on a file that failed to
+    // parse, which is the one direction this must never fail in.
+    const dir = auditDir(tmpHome);
+    mkdirSync(dir, { recursive: true });
+    const { totals: _totals, ...withoutTotals } = FAKE_RESULT;
+    writeFileSync(
+      auditDashboardFile(tmpHome),
+      JSON.stringify({
+        schemaVersion: DASHBOARD_CACHE_SCHEMA_VERSION,
+        cachedAt: new Date().toISOString(),
+        params: { since: "7d" },
+        result: withoutTotals,
+      }),
+      "utf-8",
+    );
+    const meta = readDashboardCacheMeta();
+    expect(meta).not.toBeNull();
+    expect(meta?.findings).toBeNull();
+    // The fields that ARE present still read.
+    expect(meta?.sessionsScanned).toBe(5);
+  });
+
+  it("readDashboardCacheMeta returns null when the file is missing", () => {
+    expect(readDashboardCacheMeta()).toBeNull();
+  });
+});

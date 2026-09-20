@@ -1,0 +1,44 @@
+---
+---
+title: הסרת מדיניות
+description: "הסר ערכי hook מהגדרות Claude Code"
+---
+
+```bash
+failproofai policies --uninstall [policy-names...] [options]
+```
+
+מסיר ערכי failproofai hook מ-`settings.json` של Claude Code.
+
+כינויים: `failproofai p -u`
+
+## אפשרויות
+
+| דגל | תיאור |
+|------|-------------|
+| `--scope user` | הסר מהגדרות גלובליות (ברירת מחדל) |
+| `--scope project` | הסר מהגדרות הפרויקט |
+| `--scope local` | הסר מהגדרות מקומיות |
+| `--scope all` | הסר מכל ההיקפים בו-זמנית |
+| `--custom` / `-c` | נקה את `customPoliciesPath` מהתצורה |
+
+## התנהגות
+
+- **ללא שמות מדיניות** - מסיר את כל ערכי failproofai hook מקובץ ההגדרות
+- **שמות ספציפיים** - מכבה מדיניות אלה אך משאיר hooks מותקנים
+
+## דוגמאות
+
+```bash
+# הסר את כל ה-hooks באופן גלובלי
+failproofai policies --uninstall
+
+# כבה מדיניות ספציפית (שמור hooks מותקנים)
+failproofai policies --uninstall block-sudo
+
+# הסר hooks מכל היקף
+failproofai policies --uninstall --scope all
+
+# נקה את נתיב המדיניות המותאמות
+failproofai policies --uninstall --custom
+```

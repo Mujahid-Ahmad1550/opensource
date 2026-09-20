@@ -1,0 +1,307 @@
+---
+title: サンプル
+description: "Claude Code と Agents SDK にフックを設定する方法"
+icon: book-open
+---
+
+よくあるシナリオですぐに使えるサンプル集です。それぞれのインストール方法と動作結果を紹介します。
+
+---
+
+## Claude Code にフックを設定する
+
+Failproof AI は Claude Code の[フックシステム](https://docs.anthropic.com/en/docs/claude-code/hooks)を通じて統合されます。`failproofai policies --install` を実行すると、Claude Code の `settings.json` にフックコマンドが登録され、ツール呼び出しのたびに実行されます。
+
+<Steps>
+  <Step title="failproofai をインストールする">
+    ```bash
+    npm install -g failproofai
+    ```
+  </Step>
+  <Step title="すべての組み込みポリシーを有効にする">
+    ```bash
+    failproofai policies --install
+    ```
+  </Step>
+  <Step title="フックが登録されたことを確認する">
+    ```bash
+    cat ~/.claude/settings.json | grep failproofai
+    ```
+
+    `PreToolUse`、`PostToolUse`、`Notification`、`Stop` イベントのフックエントリが表示されるはずです。
+  </Step>
+  <Step title="Claude Code を起動する">
+    ```bash
+    claude
+    ```
+
+    ポリシーはツール呼び出しのたびに自動的に実行されます。Claude に `sudo rm -rf /` を実行させようとしてみてください。ブロックされます。
+  </Step>
+</Steps>
+
+---
+
+## Agents SDK にフックを設定する
+
+[Agents SDK](https://docs.anthropic.com/en/docs/agents-sdk) を使って開発している場合、同じフックシステムをプログラムから利用できます。
+
+<Steps>
+  <Step title="プロジェクトに failproofai をインストールする">
+    ```bash
+    npm install failproofai
+    ```
+  </Step>
+  <Step title="エージェントにフックを設定する">
+    エージェントプロセスの作成時にフックコマンドを渡します。フックは Claude Code と同じ方法で、stdin/stdout JSON を介して発火します。
+
+    ```bash
+    failproofai --hook PreToolUse   # called before each tool
+    failproofai --hook PostToolUse  # called after each tool
+    ```
+  </Step>
+  <Step title="エージェント用のカスタムポリシーを作成する">
+    ```javascript
+    import { customPolicies, allow, deny } from "failproofai";
+
+    customPolicies.add({
+      name: "limit-to-project-dir",
+      description: "Keep the agent inside the project directory",
+      match: { events: ["PreToolUse"] },
+      fn: async (ctx) => {
+        const path = String(ctx.toolInput?.file_path ?? "");
+        if (path.startsWith("/") && !path.startsWith(ctx.session?.cwd ?? "")) {
+          return deny("Agent is restricted to the project directory");
+        }
+        return allow();
+      },
+    });
+    ```
+  </Step>
+  <Step title="カスタムポリシーをインストールする">
+    ```bash
+    failproofai policies --install --custom ./my-agent-policies.js
+    ```
+  </Step>
+</Steps>
+
+---
+
+## 破壊的なコマンドをブロックする
+
+最もよくある設定 — エージェントが取り消せないダメージを与えるのを防ぎます。
+
+```bash
+failproofai policies --install block-sudo block-rm-rf block-force-push block-curl-pipe-sh
+```
+
+この設定でできること:
+- `block-sudo` — すべての `sudo` コマンドをブロック
+- `block-rm-rf` — 再帰的なファイル削除をブロック
+- `block-force-push` — `git push --force` をブロック
+- `block-curl-pipe-sh` — リモートスクリプトをシェルにパイプするのをブロック
+
+---
+
+## シークレットの漏洩を防ぐ
+
+エージェントがツール出力で認証情報を参照・漏洩しないようにします。
+
+```bash
+failproofai policies --install sanitize-api-keys sanitize-jwt sanitize-connection-strings sanitize-bearer-tokens
+```
+
+これらは `PostToolUse` で発火します。ツール実行後、エージェントが結果を受け取る前に出力をスクラブします。
+
+---
+
+## エージェントが応答待ちになったら Slack に通知する
+
+通知フックを使って、アイドル状態のアラートを Slack に転送します。
+
+```javascript
+import { customPolicies, allow, instruct } from "failproofai";
+
+customPolicies.add({
+  name: "slack-on-idle",
+  description: "Alert Slack when the agent is waiting for input",
+  match: { events: ["Notification"] },
+  fn: async (ctx) => {
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (!webhookUrl) return allow();
+
+    const message = String(ctx.payload?.message ?? "Agent is waiting");
+    const project = ctx.session?.cwd ?? "unknown";
+
+    try {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: `*${message}*\nProject: \`${project}\``,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      // never block the agent if Slack is unreachable
+    }
+
+    return allow();
+  },
+});
+```
+
+インストール:
+
+```bash
+SLACK_WEBHOOK_URL=https://hooks.slack.com/... failproofai policies --install --custom ./slack-alerts.js
+```
+
+---
+
+## エージェントをブランチに固定する
+
+エージェントが別のブランチに切り替えたり、保護されたブランチにプッシュしたりするのを防ぎます。
+
+```javascript
+import { customPolicies, allow, deny } from "failproofai";
+
+customPolicies.add({
+  name: "stay-on-branch",
+  description: "Prevent the agent from checking out other branches",
+  match: { events: ["PreToolUse"] },
+  fn: async (ctx) => {
+    if (ctx.toolName !== "Bash") return allow();
+    const cmd = String(ctx.toolInput?.command ?? "");
+    if (/git\s+checkout\s+(?!-b)/.test(cmd)) {
+      return deny("Stay on the current branch. Create a new branch with -b if needed.");
+    }
+    return allow();
+  },
+});
+```
+
+---
+
+## コミット前にテストを要求する
+
+コミットする前にテストを実行するようエージェントに促します。
+
+```javascript
+import { customPolicies, allow, instruct } from "failproofai";
+
+customPolicies.add({
+  name: "test-before-commit",
+  description: "Remind the agent to run tests before committing",
+  match: { events: ["PreToolUse"] },
+  fn: async (ctx) => {
+    if (ctx.toolName !== "Bash") return allow();
+    const cmd = String(ctx.toolInput?.command ?? "");
+    if (/git\s+commit/.test(cmd)) {
+      return instruct("Run tests before committing. Use `npm test` or `bun test` first.");
+    }
+    return allow();
+  },
+});
+```
+
+---
+
+## 本番リポジトリをロックダウンする
+
+プロジェクトレベルの設定をコミットして、チーム全員が同じポリシーを適用できるようにします。
+
+リポジトリに `.failproofai/policies-config.json` を作成します:
+
+```json
+{
+  "enabledPolicies": [
+    "block-sudo",
+    "block-rm-rf",
+    "block-force-push",
+    "block-push-master",
+    "block-env-files",
+    "sanitize-api-keys",
+    "sanitize-jwt"
+  ],
+  "policyParams": {
+    "block-push-master": {
+      "protectedBranches": ["main", "release", "production"]
+    }
+  }
+}
+```
+
+コミットします:
+
+```bash
+git add .failproofai/policies-config.json
+git commit -m "Add failproofai team policies"
+```
+
+failproofai をインストールしているすべてのチームメンバーが、これらのルールを自動的に取得します。
+
+---
+
+## コンベンションポリシーで組織全体の品質基準を作る
+
+最も効果的な設定: プロジェクトに合わせたポリシーを含む `.failproofai/policies/` をリポジトリにコミットします。チームメンバー全員が自動的に取得できます — インストールコマンドも設定変更も不要です。
+
+<Steps>
+  <Step title="ディレクトリを作成してポリシーを追加する">
+    ```bash
+    mkdir -p .failproofai/policies
+    ```
+
+    ```js
+    // .failproofai/policies/team-policies.mjs
+    import { customPolicies, allow, deny, instruct } from "failproofai";
+
+    // Enforce your team's preferred package manager
+    // (or enable the built-in prefer-package-manager policy instead)
+    customPolicies.add({
+      name: "enforce-bun",
+      match: { events: ["PreToolUse"] },
+      fn: async (ctx) => {
+        if (ctx.toolName !== "Bash") return allow();
+        const cmd = String(ctx.toolInput?.command ?? "");
+        if (/\bnpm\b/.test(cmd)) return deny("Use bun instead of npm.");
+        return allow();
+      },
+    });
+
+    // Remind the agent to run tests before committing
+    customPolicies.add({
+      name: "test-before-commit",
+      match: { events: ["PreToolUse"] },
+      fn: async (ctx) => {
+        if (ctx.toolName !== "Bash") return allow();
+        if (/git\s+commit/.test(ctx.toolInput?.command ?? "")) {
+          return instruct("Run tests before committing.");
+        }
+        return allow();
+      },
+    });
+    ```
+  </Step>
+  <Step title="git にコミットする">
+    ```bash
+    git add .failproofai/policies/
+    git commit -m "Add team quality policies"
+    ```
+  </Step>
+  <Step title="継続的に改善する">
+    チームが新たな問題に直面したら、ポリシーを追加してプッシュしましょう。次回の `git pull` で全員が更新を受け取ります。これらのポリシーは、チームとともに成長する生きた品質基準となります。
+  </Step>
+</Steps>
+
+---
+
+## その他のサンプル
+
+リポジトリの [`examples/`](https://github.com/failproofai/failproofai/tree/main/examples) ディレクトリには以下が含まれています:
+
+| ファイル | 内容 |
+|------|---------------|
+| `policies-basic.js` | スターターポリシー — 本番環境への書き込み、force-push、パイプスクリプトのブロック |
+| `policies-notification.js` | アイドル通知とセッション終了時の Slack アラート |
+| `policies-advanced/index.js` | 推移的インポート、非同期フック、PostToolUse 出力スクラブ、Stop イベント処理 |

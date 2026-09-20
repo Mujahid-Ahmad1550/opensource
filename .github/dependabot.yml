@@ -1,0 +1,73 @@
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    ignore:
+      # TypeScript 7.x is the native (Go) port: its npm package exposes only the
+      # experimental `typescript/unstable/*` API, not the classic compiler API.
+      # Next.js's build-time TS config validation and typescript-eslint (peer
+      # `typescript >=4.8.4 <6.1.0`) both require the classic API, so a 7.x bump
+      # breaks `next build` and `bun run lint`. Stay on 6.x until the toolchain
+      # ships native-port support. See #536 (and #499, the bump this blocks).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
+  # The Rust workspace. Absent until the daemon shipped, so `Cargo.lock` was
+  # updated only by hand — for a dependency tree that includes the TLS stack
+  # compiled into a root-installed system service.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the whole tree rather than five a week: these crates are
+      # verified together by `cargo test --workspace`, and splitting them means
+      # each PR rebuilds the same lockfile the others just changed.
+      rust-dependencies:
+        patterns:
+          - "*"
+
+  # The `fp` CLI (PyPI: fp-cloud-cli) — the only Python in the repo. Its lockfile is
+  # `fp-cloud-cli/uv.lock`, so the ecosystem is `uv`, and the directory is the package
+  # root rather than `/`. Grouped for the same reason as the Rust tree: the whole
+  # dependency set is verified together by one pytest run, and separate PRs each
+  # rebuild the lockfile the others just changed.
+  - package-ecosystem: uv
+    directory: /fp-cloud-cli
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  # The telemetry SDK (PyPI: failproofai-sdk). Its own lockfile and its own uv
+  # ecosystem entry — dependabot resolves per directory, so fp-cloud-cli's entry above
+  # does not see this tree at all. The only things in the lockfile are the test
+  # runner and its transitive deps: the package itself declares NO runtime
+  # dependencies, and `tests/test_zero_dependencies.py` fails if that changes.
+  - package-ecosystem: uv
+    directory: /sdk/python
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"

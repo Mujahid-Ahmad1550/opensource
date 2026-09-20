@@ -1,0 +1,233 @@
+name: Build failproofaid
+
+# Builds the real per-platform failproofaid binaries. Separate from ci.yml's
+# cheap rust-quality job (lint/clippy/test on one native runner) because
+# this is a slow 4-way cross-compile matrix — path-filtered so ordinary PRs
+# that never touch the Rust workspace don't pay for it.
+#
+# `workflow_call` is how a release actually gets its binaries: publish.yml
+# calls this workflow and then downloads the artifacts below in the same run,
+# so the assets it uploads are built from the exact commit being published.
+# There is deliberately NO `release: published` trigger — publish.yml owns
+# that path now, and a standalone trigger would build the whole matrix twice
+# per release.
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/build-daemon.yml"
+  workflow_call:
+  workflow_dispatch:
+
+# Consecutive pushes to a Rust PR would otherwise stack 4-leg cross-compile
+# matrices that nothing cancels — the most expensive PR-triggered workflow in
+# the repo, started once per push and left running. Superseding is only ever
+# right on `pull_request`: the `workflow_call` legs ARE the release's binaries,
+# and a cancelled one is a release that ships without its daemon.
+concurrency:
+  group: build-daemon-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The Rust workspace does not exist on every ref this workflow can run
+  # against: `main` carries no `Cargo.toml` until the daemon lands, and the
+  # path filter above matches this file itself, so a PR that only edits the
+  # workflow would otherwise run `cargo build` against a checkout with no
+  # crates in it and fail. Detect the workspace and skip the matrix cleanly —
+  # a skipped job is also what lets publish.yml call this from a ref that has
+  # no daemon at all.
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_crates: ${{ steps.check.outputs.has_crates }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check for the Rust workspace
+        id: check
+        run: |
+          if [ -f Cargo.toml ] && [ -d crates ]; then
+            echo "has_crates=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_crates=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Rust workspace on this ref — skipping the failproofaid build matrix."
+          fi
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.has_crates == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux legs use GitHub-hosted native runners for both
+          # architectures (including a native arm64 runner) rather than
+          # `cross`/Docker cross-compilation — a real linker for the target
+          # triple, no QEMU emulation overhead.
+          #
+          # musl, NOT gnu: a glibc build links against the runner's own libc,
+          # and `ubuntu-latest` is 24.04 (glibc 2.39), so the 1.0.0-beta.0
+          # binaries refused to start on Ubuntu 22.04, Debian 12, RHEL 9 and
+          # Amazon Linux 2023 with `version GLIBC_2.39 not found` — measured,
+          # not predicted. Pinning an older runner would only move the floor
+          # (22.04 is glibc 2.35, still above RHEL 9's 2.34); a static musl
+          # binary has no floor at all. The daemon is a socket supervisor with
+          # no NSS or dlopen use, which is what makes static linking safe here.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            platform: linux-x64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            platform: linux-arm64
+          # macOS cannot be cross-compiled reliably from Linux (system
+          # framework linking), so both legs use real Apple Silicon / Intel
+          # runners. `macos-15-intel` rather than `macos-13`: GitHub retired
+          # the macOS 13 images, and an unknown runner label doesn't degrade
+          # — the leg never gets a runner at all.
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            platform: darwin-x64
+          - target: aarch64-apple-darwin
+            os: macos-14
+            platform: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    # Nothing in this job has a bounded runtime of its own, and GitHub's default
+    # is six hours. On 2026-08-19 the linux-x64 leg sat in `apt-get update`
+    # against a stalled Azure mirror through three runner re-dispatches with a
+    # release blocked behind it, while the arm64 leg ran the same step in
+    # seconds. A cross compile that has not finished in 30 minutes is not going
+    # to, and a bounded failure is re-runnable where a hang is not.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # Nothing here pushes, and everything here runs third-party crate
+          # build scripts (`cargo build` on the full dependency tree). The
+          # default leaves GITHUB_TOKEN sitting in .git/config for the rest
+          # of the job, readable by any of them — and this job publishes a
+          # release binary.
+          persist-credentials: false
+
+      - run: rustup target add ${{ matrix.target }}
+
+      # `rustup target add` ships the musl std library but not a musl linker;
+      # without musl-tools the leg fails at link time with
+      # `linker 'musl-gcc' not found`. Both Linux runners are native to their
+      # own target, so the distro package is the right linker for the triple.
+      # It is not droppable either: `-p failproofaid` reaches `rusqlite` with
+      # `bundled` (compiles sqlite3.c) and `ring` through rustls, so the `cc`
+      # crate resolves `musl-gcc` on both musl legs.
+      #
+      # Retried and bounded, because the failure mode here is a HANG rather than
+      # an error, and apt's own acquire timeouts do not reliably catch it: on
+      # 2026-08-19 every `azure.archive.ubuntu.com` line came back `Ign`, apt
+      # fell back to `archive.ubuntu.com`, fetched the InRelease files, and then
+      # sat for three and a half minutes emitting nothing.
+      #
+      # `sudo timeout`, NOT `nick-fields/retry` — that was the first attempt and
+      # CI rejected it. The action bounds a step by killing its process tree
+      # from the runner user, and apt runs as root: the timeout fired correctly
+      # at four minutes and the action then died with `kill EPERM` instead of
+      # retrying, turning a recoverable stall into a failed leg. Putting
+      # `timeout` INSIDE the sudo is what makes the killer root too.
+      #
+      # The fast path skips the network altogether. `apt-get update` is the step
+      # that stalls, and it is only needed when the runner image's package lists
+      # cannot satisfy the install — so try the install first and refresh only
+      # on failure. `-qq` is gone on purpose as well: it suppressed the
+      # per-mirror progress that says WHICH endpoint stalled.
+      - name: Install the musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: |
+          install_musl() {
+            sudo timeout -k 10 90 apt-get install -y --no-install-recommends musl-tools
+          }
+          if install_musl; then
+            musl-gcc --version | head -1
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            echo "::group::apt-get update (attempt $attempt)"
+            sudo timeout -k 10 120 apt-get update \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=15 \
+              -o Acquire::https::Timeout=15 \
+              -o Acquire::Languages=none || echo "attempt $attempt timed out or failed"
+            echo "::endgroup::"
+            if install_musl; then
+              musl-gcc --version | head -1
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::musl-tools could not be installed after 3 attempts — see the apt output above for the stalling mirror"
+          exit 1
+
+      # `save-if` rather than a plain cache, for the reason the split
+      # restore/save here used to carry: this job runs on `pull_request` AND on
+      # the release path (via `workflow_call` from publish.yml, where
+      # `github.event_name` is the caller's `release`/`workflow_dispatch`), and
+      # the cache key is shared between them. A PR branch could otherwise write
+      # a poisoned `target/` entry that a later release run restores straight
+      # into a published binary. PR runs read the cache; only release / manual
+      # runs write it.
+      #
+      # rust-cache rather than the hand-rolled `actions/cache` pair, because the
+      # naive `path: target` it replaced is what made ci.yml's sibling entry
+      # 5.7 GB — 57% of the repo's whole 10 GB cache quota in one key, taking
+      # 127s to restore against the 74s of compilation it saved. rust-cache
+      # prunes `target/` to dependency artifacts and drops the workspace's own
+      # output, which is the difference between caching a build and caching a
+      # build directory. `key` keeps the four legs from sharing an entry.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      # --locked: this job's output is the binary users install, so it must be
+      # built from the dependency versions committed in Cargo.lock. Without it
+      # Cargo is free to resolve something newer and silently rewrite the
+      # lockfile in the runner, making the published artifact unreproducible
+      # from the commit it claims to come from.
+      - name: cargo build --release
+        run: cargo build --locked --release --target ${{ matrix.target }} -p failproofaid
+
+      # Plain gzip, not tar: the CLI decompresses this with `node:zlib` and no
+      # dependency, and a single-file stream needs no archive format. It also
+      # sidesteps `upload-artifact` dropping the executable bit — a compressed
+      # blob carries no mode to lose, and both consumers (the CLI downloader
+      # and install.sh) chmod after decompressing anyway.
+      #
+      # Every leg runs on a runner native to its own target, so executing the
+      # freshly built binary here is a real smoke test that the artifact is
+      # not a broken build.
+      - name: Compress the binary for release
+        run: |
+          BIN="target/${{ matrix.target }}/release/failproofaid"
+          "$BIN" --version
+          # A dynamically linked "static" build would reintroduce the glibc
+          # floor silently — the binary still runs here, on the runner that
+          # built it, and only fails on the users' older distros. Assert the
+          # property on the artifact itself.
+          if [[ "${{ matrix.target }}" == *musl* ]]; then
+            file "$BIN"
+            if ldd "$BIN" 2>&1 | grep -qv "not a dynamic executable\|statically linked"; then
+              echo "::error::${{ matrix.platform }} is not statically linked — it would inherit the runner's glibc floor"
+              ldd "$BIN" || true
+              exit 1
+            fi
+          fi
+          gzip -9 -c "$BIN" > "failproofaid-${{ matrix.platform }}.gz"
+          ls -l "failproofaid-${{ matrix.platform }}.gz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: failproofaid-${{ matrix.platform }}
+          path: failproofaid-${{ matrix.platform }}.gz
+          if-no-files-found: error

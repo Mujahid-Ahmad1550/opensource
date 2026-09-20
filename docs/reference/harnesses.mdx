@@ -1,0 +1,141 @@
+---
+title: "Agent harnesses"
+description: "Capture sessions and enforce policies across all 12 supported agent harnesses."
+icon: "plug-zap"
+---
+
+A harness is whatever your agent actually runs inside. Failproof AI supports twelve of them, in two classes:
+
+- **Coding CLIs** (10) — Claude Code, Codex, GitHub Copilot CLI, Cursor, OpenCode, Pi, Factory Droid, Devin CLI, Antigravity CLI, Goose
+- **Chat and assistant gateways** (2) — Hermes (Slack, Telegram, cron), OpenClaw (self-hosted assistant)
+
+The same policies and the same session history apply whichever one an agent runs in. One adapter layer maps each harness's native event names, tool names, and tool-input fields onto 29 canonical events before any policy runs.
+
+An agent that runs in **none** of the twelve is instrumented directly with the [Python SDK](/reference/custom-agents). That is a different contract, and worth stating plainly: the SDK delivers tracing, sessions, evaluations and audits — **it does not enforce policies on its own.** Blocking an unsafe action before it executes needs an enforcement hook at your runtime's tool boundary; [contact us](mailto:support@befailproof.ai) and we will map it.
+
+| Harness | Supported hook scopes |
+| --- | --- |
+| Claude Code | User, project, local |
+| Codex, GitHub Copilot CLI, Cursor, OpenCode, Pi | User, project |
+| Factory Droid, Devin CLI, Antigravity CLI, Goose | User, project |
+| Hermes, OpenClaw | User |
+
+Each integration normalizes its native hook event names, tool names, and tool-input fields before policies run. A policy can only act on events the harness exposes; test end-of-turn and instruction behavior on the exact harness and version you deploy.
+
+## Enforcement capability
+
+“Block” means the current adapter's returned verdict is consumed by the named harness. Post-tool blocking may replace the result shown to the model but cannot undo a tool side effect that already happened.
+
+| Harness | Verified blocking events | Observe-only or non-blocking caveats |
+| --- | --- | --- |
+| Claude Code | `PreToolUse`, `UserPromptSubmit`, `PermissionRequest`, `Stop`, `SubagentStop`, `PreCompact`, and several task/config events | `PostToolUse`, session lifecycle, notifications, and post-failure events are observational. |
+| Codex | `PreToolUse`, `PermissionRequest`, `UserPromptSubmit`, `Stop`, `SubagentStop`, `PostToolUse` | Post-tool blocking replaces the result after execution; session-start and compact events are observational in the current adapter. |
+| GitHub Copilot CLI | `PreToolUse`, `UserPromptSubmit`, `PermissionRequest`, `Stop`, `SubagentStop`, `PostToolUse` | Post-tool blocking replaces the result after execution; session and notification events are observational. |
+| Cursor | `PreToolUse`, `UserPromptSubmit`, `Stop` | `PostToolUse` and session events are observational. |
+| OpenCode | `PreToolUse` | Post-tool and lifecycle events are observational; current stop handling is guidance for a later turn rather than a verified gate. |
+| Pi | `PreToolUse`, `UserPromptSubmit` | Post-tool and lifecycle events are observational; stop guidance applies to a later turn. |
+| Hermes | `PreToolUse` | A native plugin delivers `instruct()` as one bounded, model-visible interruption before permitting a later API iteration. Post-tool, session, and subagent-stop verdicts are not gates. |
+| OpenClaw | `PreToolUse`, `UserPromptSubmit`, `Stop` | Post-tool, session, subagent-stop, and compaction events are observational. |
+| Factory Droid | `PreToolUse`, `UserPromptSubmit`, `Stop`, `PreCompact` | Post-tool and subagent-stop verdicts are observational. |
+| Devin CLI | `PreToolUse`, `UserPromptSubmit`, `Stop`, conditional `PermissionRequest` | Permission hooks do not run in every permission mode; post-tool and session events are observational. |
+| Antigravity CLI | `PreToolUse`, `Stop` | User-prompt and post-tool verdicts are observational; prompt instructions can still be injected. |
+| Goose | `PreToolUse` | User-prompt, post-tool, and session events are observational. A native blocking stop hook exists upstream but is not installed by the current adapter. |
+
+Capabilities are version-sensitive. Re-test after upgrading an agent CLI, especially when a policy relies on prompt, stop, permission, or post-tool behavior rather than the common pre-tool gate.
+
+### Hermes native plugin
+
+Hermes is integrated through a profile-local native plugin rather than a shell
+command. Installation copies the plugin into every default and named Hermes
+profile, enables it in that profile's `config.yaml`, and migrates only legacy
+FailproofAI shell-hook entries. This avoids a process spawn on each hook and
+lets `instruct()` reach the model through Hermes' native blocked-tool result.
+
+The first matching instruction blocks the pending call. The same API request
+stays blocked; a later model iteration may retry. A persistent, profile-scoped
+ledger and a per-turn cap prevent an advisory instruction from becoming an
+unbounded loop. `deny()` remains a hard block. Run `failproofai config --status`
+to detect a disabled, incomplete, duplicated, or newly unconfigured profile.
+
+## Install capture and policy hooks
+
+<Tabs>
+  <Tab title="Dashboard">
+    1. Open **Administration → Keys** and create a key with `events:add` and `policies:pull`, named for the machine or environment.
+    2. On the target machine, connect the local CLI with the displayed key and install the harness hooks.
+    3. Start a new agent session, then confirm its hook and session events under **Observe → Events**.
+    4. Open **Observe → policy** for the same time window and confirm a policy decision is attributed to the machine.
+
+    The connection starts with a machine key. Confirm that it includes both ingestion and policy-delivery permissions before copying its secret.
+
+    ![The new API key drawer used to grant event ingestion and policy delivery permissions.](/images/dashboard/key-create.png)
+
+    After installing the hooks, the Events stream should show new events from the machine and environment you connected.
+
+    ![The live Events stream used to confirm a newly installed harness is reporting.](/images/dashboard/events-stream.png)
+
+    Finally, verify that policy decisions are attributed to the same machine. This confirms the harness is reporting policy activity as well as trace events.
+
+    ![The Policy page used to verify policy decisions from a newly connected harness.](/images/dashboard/policy-observe.png)
+  </Tab>
+  <Tab title="CLI">
+    Read the machine key into the shell. `read -s` takes it at a prompt that does not echo, so it never appears in a command or in shell history:
+
+    ```bash
+    read -rs FAILPROOFAI_CLOUD_TOKEN && export FAILPROOFAI_CLOUD_TOKEN
+    ```
+
+    Then set the machine up — this wires hooks for every detected harness, installs the daemon, and connects to Cloud:
+
+    ```bash
+    failproofai config
+    failproofai policies add FailproofAI/policies
+    ```
+
+    Setup enables no policy on its own, which is what the second command is for.
+
+    Or target named harnesses and a configuration scope:
+
+    ```bash
+    failproofai policies --install \
+      --cli claude codex cursor \
+      --scope user
+    ```
+
+    Project scope keeps hook configuration with a repository. User scope covers work across repositories. Claude Code also supports local scope; support varies by harness and the CLI rejects unsupported combinations.
+
+    Verify the machine and its events:
+
+    ```bash
+    failproofai config --status
+    failproofai flush --wait
+    fp events --since 1h --event-type hook_triggered,hook_completed
+    ```
+  </Tab>
+</Tabs>
+
+## Add a non-default session path
+
+<Tabs>
+  <Tab title="Dashboard">
+    Extra paths are registered on the machine, not in Cloud. After adding one, open **Observe → Sessions**, filter to the machine's environment, and confirm sessions from the new path appear. Open a session and check the agent, harness, and event timestamps before relying on it in an audit.
+
+    ![The Sessions list filtered to the environment receiving data from the additional capture path.](/images/dashboard/sessions-list.png)
+  </Tab>
+  <Tab title="CLI">
+    Add a path with an optional label, then inspect the configured paths:
+
+    ```bash
+    failproofai harness add-path claude checkout=/srv/checkout/.claude
+    failproofai harness list claude
+    failproofai backfill --since 7d --dry-run
+    failproofai backfill --since 7d
+    ```
+
+    Remove a path with `failproofai harness remove-path claude checkout`.
+  </Tab>
+</Tabs>
+
+<Tip>
+  Run one new session after installation. Verify both the live event stream and an actual policy decision before expanding the rollout.
+</Tip>

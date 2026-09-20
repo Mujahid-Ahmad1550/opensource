@@ -1,0 +1,848 @@
+---
+title: 組み込みポリシー
+description: "エージェントの一般的な障害モードを検出する39の組み込みポリシー"
+icon: shield
+---
+
+failproofai には、エージェントの一般的な障害モードを検出する39の組み込みポリシーが含まれています。各ポリシーは特定のフックイベントタイプとツール名に基づいて動作します。19のポリシーはコードを書かずに動作を調整できるパラメーターを受け付けます。5つのワークフローポリシーは、Claude が停止する前にコミット → プッシュ → PR → CI のパイプラインを強制します。
+
+---
+
+## 概要
+
+ポリシーはカテゴリ別にグループ化されています：
+
+| カテゴリ | ポリシー | フックタイプ |
+|----------|----------|-----------|
+| [危険なコマンド](#dangerous-commands) | block-sudo, block-rm-rf, block-curl-pipe-sh, block-failproofai-commands, block-self-pause | PreToolUse |
+| [インフラコマンド](#infra-commands) | block-kubectl, block-terraform, block-aws-cli, block-gcloud, block-az-cli, block-helm, block-gh-pipeline | PreToolUse |
+| [シークレット（サニタイザー）](#secrets-sanitizers) | sanitize-jwt, sanitize-api-keys, sanitize-connection-strings, sanitize-private-key-content, sanitize-bearer-tokens | PostToolUse |
+| [環境](#environment) | block-env-files, protect-env-vars | PreToolUse |
+| [ファイルアクセス](#file-access) | block-read-outside-cwd, block-secrets-write | PreToolUse |
+| [Git](#git) | block-push-master, block-work-on-main, block-force-push, warn-git-amend, warn-git-stash-drop, warn-all-files-staged | PreToolUse |
+| [データベース](#database) | warn-destructive-sql, warn-schema-alteration | PreToolUse |
+| [警告](#warnings) | warn-large-file-write, warn-package-publish, warn-background-process, warn-global-package-install | PreToolUse |
+| [パッケージマネージャー](#package-managers) | prefer-package-manager | PreToolUse |
+| [ワークフロー](#workflow) | require-commit-before-stop, require-push-before-stop, require-pr-before-stop, require-no-conflicts-before-stop, require-ci-green-before-stop | Stop |
+
+- **`block-`** — エージェントの処理を停止します。
+- **`warn-`** — エージェントが自己修正できるよう追加のコンテキストを提供します。
+- **`sanitize-`** — エージェントが確認する前にツール出力から機密データを除去します。
+
+### 名前空間
+
+すべてのポリシーは `<namespace>/<name>` スロットに存在します。組み込みポリシーは **`failproofai/`** 名前空間に属します（例：`failproofai/sanitize-jwt`）。名前空間は、似た短い名前を持つカスタムまたはサードパーティポリシーを読み込む際の衝突を防ぎます。
+
+設定では、組み込みポリシーを短い名前または完全修飾名のどちらでも参照できます。どちらの形式も同じポリシーに解決されます：
+
+```json
+{
+  "enabledPolicies": [
+    "sanitize-jwt",
+    "failproofai/block-rm-rf"
+  ]
+}
+```
+
+名前に `/` が含まれない場合、failproofai はそれをデフォルト名前空間 `failproofai` に属するものとして扱います。すでに `/` を含む名前（例：`myorg/foo`、`custom/my-hook`）はそのまま保持されます。
+- **`require-`** — 条件が満たされるまで Stop イベントをブロックします。
+
+---
+
+<Tip>
+すべてのポリシーは `policyParams` でオプションの `hint` フィールドをサポートしています。ヒントは Claude が受け取る deny または instruct メッセージに追記され、ポリシーコードを変更せずに実行可能なガイダンスを提供します。組み込み、カスタム、コンベンションポリシーで動作します。詳細は [設定 → hint](/ja/configuration#hint-cross-cutting) を参照してください。
+</Tip>
+
+---
+
+## 危険なコマンド
+
+取り消しが困難な操作や、ホストシステムに損害を与える可能性のある操作をエージェントが実行しないようにします。
+
+### `block-sudo`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `sudo` または `doas` コマンドを拒否します。
+
+**コマンドポジション**にある昇格バイナリを実行するコマンドをブロックします。マッチングはテキストではなく構造的に行われます：コマンドはシェルと同様の方法でセグメントに分割され、プレフィックスの代入（`FOO=bar`）、リダイレクト、フラグ付きランナー（`env`、`nohup`、`timeout`、`xargs`、`sh -c` など）が取り除かれ、結果として得られるバイナリが**ベース名**で比較されます。そのため、`/usr/bin/sudo`、`env sudo`、`timeout 5 sudo`、`"sudo"`、`\sudo`、`bash -c "sudo …"` はすべて拒否され、`doas` も同じ機能を持つ別名として扱われます。
+
+コマンドポジションにアンカーしているため、単に言及されているだけのコマンドには反応しません。`grep -r sudo /etc`、`cat /etc/sudoers`、`git commit -m "fix sudo handling"`、または単語を含む `grep` の代替はすべて正常に実行されます。
+
+<Warning>
+これは明白な試みを止めますが、そのクラス全体を網羅するわけではありません。任意のシェルを実行できるエージェントは、変数（`S=sudo; $S …`）、base64デコードされたパイプ、またはディスク上のラッパースクリプトを通じて間接的に昇格に到達できます。単一のコマンド文字列の検査ではそれらを追跡できないためです。これはミスや軽率なエスカレーションに対するガードレールとして扱ってください。意図的なエージェントに対するセキュリティ境界としては機能しません。本物の境界はシェルの下のレイヤーで強制する必要があります。
+</Warning>
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | 許可される正確なコマンドプレフィックス。各エントリは解析された argv トークンに対してマッチングされます。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-sudo": {
+      "allowPatterns": ["sudo systemctl status", "sudo journalctl"]
+    }
+  }
+}
+```
+
+この設定では、`sudo systemctl status nginx` は許可されますが、`sudo rm /etc/hosts` は拒否されます。
+
+<Note>
+パターンは生のコマンド文字列ではなく、解析されたトークンに対してマッチングされます。これにより、追加のシェル演算子（例：`sudo systemctl status x; rm -rf /` は `sudo systemctl status *` にマッチしない）によるバイパスを防ぎます。
+</Note>
+
+---
+
+### `block-rm-rf`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `rm -rf`、`rm -fr`、および類似の再帰的削除形式を拒否します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPaths` | `string[]` | `[]` | 再帰的に削除しても安全なパス（例：`/tmp`）。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-rm-rf": {
+      "allowPaths": ["/tmp", "/var/cache"]
+    }
+  }
+}
+```
+
+---
+
+### `block-curl-pipe-sh`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `curl <url> | bash`、`curl <url> | sh`、`wget <url> | bash` および類似のパターンを拒否します。
+
+パラメーターなし。
+
+---
+
+### `block-failproofai-commands`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** failproofai 自体をアンインストールまたは無効化するコマンドを拒否します（例：`npm uninstall failproofai`、`failproofai policies --uninstall`）。
+
+パラメーターなし。
+
+---
+
+### `block-self-pause`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** セッションの強制を一時停止する `failproofai config --pause` を拒否します。一時停止は人間が決定すべきことです。エージェントがこれを実行できると、単一のコマンドで他のすべてのポリシーをオフにできてしまいます。
+
+意図的に [`block-failproofai-commands`](#block-failproofai-commands) より範囲が狭く、そのポリシーにはカバーされていません。そのポリシーはコマンド境界にアンカーしているため、`npx -y failproofai config --pause` はマッチせず、また広範であるためエージェントが `failproofai audit` を実行できるよう無効にされることが多いです。`--resume` と `--status` は許可されています。どちらも強制を削除しません。
+
+これは直接的な試みを止めますが、クラス全体ではありません。エージェントはエイリアスやラッパースクリプトを通じて同じ状態に到達できます。完全に閉じるには、ツール呼び出しからそもそも一時停止にアクセスできないようにする必要があります。
+
+パラメーターなし。
+
+---
+
+## インフラコマンド
+
+コーディングエージェントがインフラ CLI を実行したり、CI/CD パイプラインをトリガーしたりしないようにします。このカテゴリのすべてのポリシーは**オプトイン**（`defaultEnabled: false`）です。正当に `kubectl`、`terraform` などを呼び出す必要があるエージェントは、ポリシーを有効にしない限り影響を受けません。有効にすると、マッチした CLI のすべての呼び出しは、コマンドが `allowPatterns` のエントリに一致しない限り拒否されます。
+
+パターンの文法は [`block-sudo`](#block-sudo) と同じです：トークンは解析された argv に対してマッチングされ、`*` は1つのトークンのワイルドカードです。また、スタンドアロンのシェル演算子（`&&`、`||`、`|`、`;`）または埋め込みシェルメタキャラクターを含むトークンを含むコマンドは、インジェクションバイパスを防ぐためにアローリストマッチングの前に拒否されます。
+
+### `block-kubectl`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `kubectl` の呼び出しを拒否します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | 許可される kubectl コマンドプレフィックス。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-kubectl": {
+      "allowPatterns": ["kubectl get *", "kubectl describe *", "kubectl logs *"]
+    }
+  }
+}
+```
+
+この設定では、`kubectl get pods` は許可されますが、`kubectl apply -f deploy.yaml` は拒否されます。
+
+---
+
+### `block-terraform`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `terraform` または `tofu`（OpenTofu）の呼び出しを拒否します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | 許可される terraform/tofu コマンドプレフィックス。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-terraform": {
+      "allowPatterns": ["terraform plan", "terraform validate", "terraform show *"]
+    }
+  }
+}
+```
+
+---
+
+### `block-aws-cli`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `aws` CLI の呼び出しを拒否します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | 許可される aws CLI コマンドプレフィックス。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-aws-cli": {
+      "allowPatterns": ["aws s3 ls *", "aws sts get-caller-identity"]
+    }
+  }
+}
+```
+
+---
+
+### `block-gcloud`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `gcloud`（Google Cloud）CLI の呼び出しを拒否します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | 許可される gcloud コマンドプレフィックス。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-gcloud": {
+      "allowPatterns": ["gcloud auth list", "gcloud config list"]
+    }
+  }
+}
+```
+
+---
+
+### `block-az-cli`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `az`（Azure）CLI の呼び出しを拒否します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | 許可される az CLI コマンドプレフィックス。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-az-cli": {
+      "allowPatterns": ["az account show", "az group list"]
+    }
+  }
+}
+```
+
+---
+
+### `block-helm`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `helm` の呼び出しを拒否します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | 許可される helm コマンドプレフィックス。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-helm": {
+      "allowPatterns": ["helm list", "helm status *"]
+    }
+  }
+}
+```
+
+---
+
+### `block-gh-pipeline`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** 状態を変更したりパイプラインをトリガーしたりする以下の `gh` CLI サブコマンドを拒否します：
+
+- `gh workflow run`、`gh workflow enable`、`gh workflow disable`
+- `gh run rerun`、`gh run cancel`
+- `gh pr merge`
+- `gh release create`、`gh release delete`
+- `gh cache delete`
+- `gh secret set`、`gh secret delete`
+
+`gh pr view`、`gh pr list`、`gh run list`、`gh release view`、`gh api repos/.../...` などの読み取り専用 `gh` サブコマンドはこのポリシーにマッチしません。これらはワークフローチェック（failproofai 自身の `require-ci-green-before-stop` を含む）で日常的に必要とされます。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | 通常は拒否されるにもかかわらず許可する特定のスクリプト呼び出し。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-gh-pipeline": {
+      "allowPatterns": ["gh run rerun *"]
+    }
+  }
+}
+```
+
+---
+
+## シークレット（サニタイザー）
+
+エージェントがコンテキストや出力に認証情報を漏洩しないようにします。サニタイザーポリシーは **PostToolUse** イベントで動作します。Claude が Bash コマンドを実行したり、ファイルを読み取ったり、ツールを呼び出したりすると、これらのポリシーは出力が Claude に返される前に検査します。シークレットパターンが検出された場合、ポリシーは出力が返されないよう deny 決定を返します。
+
+### `sanitize-jwt`
+
+**イベント:** PostToolUse（すべてのツール）  
+**デフォルト:** JWT トークン（`.` で区切られた3つの base64url セグメント）を削除します。
+
+パラメーターなし。
+
+---
+
+### `sanitize-api-keys`
+
+**イベント:** PostToolUse（すべてのツール）  
+**デフォルト:** 一般的な API キー形式を削除します：Anthropic（`sk-ant-`）、OpenAI（`sk-`）、GitHub PAT（`ghp_`）、AWS アクセスキー（`AKIA`）、Stripe キー（`sk_live_`、`sk_test_`）、Google API キー（`AIza`）。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `additionalPatterns` | `{ regex: string; label: string }[]` | `[]` | シークレットとして扱う追加の正規表現パターン。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "sanitize-api-keys": {
+      "additionalPatterns": [
+        { "regex": "myco_[A-Za-z0-9]{32}", "label": "MyCo internal API key" },
+        { "regex": "pat_[0-9a-f]{40}", "label": "Internal PAT" }
+      ]
+    }
+  }
+}
+```
+
+---
+
+### `sanitize-connection-strings`
+
+**イベント:** PostToolUse（すべてのツール）  
+**デフォルト:** 埋め込まれた認証情報を含むデータベース接続文字列（例：`postgresql://user:password@host/db`）を削除します。
+
+パラメーターなし。
+
+---
+
+### `sanitize-private-key-content`
+
+**イベント:** PostToolUse（すべてのツール）  
+**デフォルト:** PEM ブロック（`-----BEGIN PRIVATE KEY-----`、`-----BEGIN RSA PRIVATE KEY-----` など）を削除します。
+
+パラメーターなし。
+
+---
+
+### `sanitize-bearer-tokens`
+
+**イベント:** PostToolUse（すべてのツール）  
+**デフォルト:** トークンが20文字以上の `Authorization: Bearer <token>` ヘッダーを削除します。
+
+パラメーターなし。
+
+---
+
+## 環境
+
+エージェントによる機密環境設定の読み取りや漏洩を防ぎます。
+
+### `block-env-files`
+
+**イベント:** PreToolUse (Bash, Read)  
+**デフォルト:** `cat .env`、`.env` をファイルパスとした `Read` ツール呼び出しなどによる `.env` ファイルの読み取りを拒否します。
+
+`.envrc` や他の環境関連ファイルはブロックしません。`.env` という名前のファイルのみをブロックします。
+
+パラメーターなし。
+
+---
+
+### `protect-env-vars`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** 環境変数を表示するコマンドを拒否します：`printenv`、`env`、`echo $VAR`。
+
+パラメーターなし。
+
+---
+
+## ファイルアクセス
+
+エージェントをプロジェクト境界内に留め、機密ファイルから遠ざけます。
+
+### `block-read-outside-cwd`
+
+**イベント:** PreToolUse (Read, Bash)  
+**デフォルト:** プロジェクトルート外のファイルの読み取りを拒否します。境界は `CLAUDE_PROJECT_DIR`（Claude Code がセッションごとに一度設定する）で、この変数が設定されていない場合はセッションのカレントワーキングディレクトリにフォールバックします。ライブの `cwd` ではなくプロジェクトルートを使用することで、Claude がサブディレクトリに `cd` した後も境界が安定して保たれます。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowPaths` | `string[]` | `[]` | プロジェクトルート外であっても許可する絶対パスプレフィックス。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-read-outside-cwd": {
+      "allowPaths": ["/shared/data", "/opt/company/config"]
+    }
+  }
+}
+```
+
+---
+
+### `block-secrets-write`
+
+**イベント:** PreToolUse (Write, Edit)  
+**デフォルト:** 秘密鍵と証明書によく使用されるファイルへの書き込みを拒否します：`id_rsa`、`id_ed25519`、`*.key`、`*.pem`、`*.p12`、`*.pfx`。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `additionalPatterns` | `string[]` | `[]` | ブロックする追加のファイル名パターン（グロブ形式）。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-secrets-write": {
+      "additionalPatterns": [".token", ".secret"]
+    }
+  }
+}
+```
+
+---
+
+## Git
+
+取り消しが困難な誤ったプッシュ、フォースプッシュ、ブランチの誤操作を防ぎます。
+
+### `block-push-master`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `git push origin main` および `git push origin master` を拒否します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `protectedBranches` | `string[]` | `["main", "master"]` | 直接プッシュできないブランチ名。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "block-push-master": {
+      "protectedBranches": ["main", "master", "release", "prod"]
+    }
+  }
+}
+```
+
+<Tip>
+すべてのブランチへのプッシュを許可する（`enabledPolicies` からポリシーを削除せずに事実上無効化する）には、`protectedBranches: []` を設定します。
+</Tip>
+
+---
+
+### `block-work-on-main`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** ワーキングツリーが `main` または `master` にある間は `git commit`、`git merge`、`git rebase`、`git cherry-pick` を拒否します。ブランチの作成と切り替え（`git checkout`、`git checkout -b`、`git switch`、`git switch -c`）は影響を受けません。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `protectedBranches` | `string[]` | `["main", "master"]` | commit/merge/rebase/cherry-pick が拒否されるブランチ名。 |
+
+---
+
+### `block-force-push`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `git push --force` および `git push -f` を拒否します。
+
+ポリシー固有のパラメーターはありません。代替手段を提案するにはクロスカッティングの [`hint`](/ja/configuration#hint-cross-cutting) を使用します：
+
+```json
+{
+  "policyParams": {
+    "block-force-push": {
+      "hint": "Create a new branch from your current HEAD (e.g. `git checkout -b <new-branch>`) and push that instead."
+    }
+  }
+}
+```
+
+---
+
+### `warn-git-amend`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `git commit --amend` を実行する際に慎重に進むよう Claude に指示します。コマンドはブロックしません。
+
+パラメーターなし。
+
+---
+
+### `warn-git-stash-drop`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `git stash drop` を実行する前に確認するよう Claude に指示します。コマンドはブロックしません。
+
+パラメーターなし。
+
+---
+
+### `warn-all-files-staged`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `git add -A` または `git add .` を実行する際にステージングする内容を確認するよう Claude に指示します。コマンドはブロックしません。
+
+パラメーターなし。
+
+---
+
+## データベース
+
+データベースに対して実行される前に破壊的な SQL 操作を検出します。
+
+### `warn-destructive-sql`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `DROP TABLE`、`DROP DATABASE`、または `WHERE` 句のない `DELETE` を含む SQL を実行する前に確認するよう Claude に指示します。
+
+パラメーターなし。
+
+---
+
+### `warn-schema-alteration`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `ALTER TABLE` ステートメントを実行する前に確認するよう Claude に指示します。
+
+パラメーターなし。
+
+---
+
+## 警告
+
+破壊的ではないが潜在的にリスクのある操作の前にエージェントに追加のコンテキストを提供します。
+
+### `warn-large-file-write`
+
+**イベント:** PreToolUse (Write)  
+**デフォルト:** 1024 KB を超えるファイルを書き込む前に確認するよう Claude に指示します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `thresholdKb` | `number` | `1024` | 警告が発せられるファイルサイズのしきい値（キロバイト）。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "warn-large-file-write": {
+      "thresholdKb": 256
+    }
+  }
+}
+```
+
+<Note>
+フックハンドラーはペイロードに対して 1 MB の stdin 制限を適用します。小さいコンテンツでこのポリシーをテストするには、`thresholdKb` を 1024 をかなり下回る値に設定してください。
+</Note>
+
+---
+
+### `warn-package-publish`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `npm publish` を実行する前に確認するよう Claude に指示します。
+
+パラメーターなし。
+
+---
+
+### `warn-background-process`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `nohup`、`&`、`disown`、または `screen` でバックグラウンドプロセスを起動する際に注意するよう Claude に指示します。
+
+パラメーターなし。
+
+---
+
+### `warn-global-package-install`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** `npm install -g`、`yarn global add`、または仮想環境なしの `pip install` を実行する前に確認するよう Claude に指示します。
+
+パラメーターなし。
+
+---
+
+## パッケージマネージャー
+
+エージェントが使用できるパッケージマネージャーを強制します。
+
+### `prefer-package-manager`
+
+**イベント:** PreToolUse (Bash)  
+**デフォルト:** 無効。有効にすると、`allowed` リストにないパッケージマネージャーコマンドをブロックし、許可されているマネージャーを使用してコマンドを書き直すよう Claude に指示します。
+
+検出対象：pip、pip3、python -m pip、npm、npx、yarn、pnpm、pnpx、bun、bunx、uv、poetry、pipenv、conda、cargo。
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-----------|------|---------|-------------|
+| `allowed` | string[] | `[]` | 許可されるパッケージマネージャー名。このリストにない検出されたマネージャーはブロックされます。空の場合、ポリシーは何もしません。 |
+| `blocked` | string[] | `[]` | 組み込みリスト以外にブロックする追加のマネージャー名（例：`['pdm', 'pipx']`）。 |
+
+組み込みブロックリストには pip、pip3、npm、npx、yarn、pnpm、pnpx、bun、bunx、uv、poetry、pipenv、conda、cargo が含まれます。このリストにないマネージャーを追加するには `blocked` を使用します。
+
+**設定例:**
+
+```json
+{
+  "enabledPolicies": ["prefer-package-manager"],
+  "policyParams": {
+    "prefer-package-manager": {
+      "allowed": ["uv", "bun"],
+      "blocked": ["pdm", "pipx"]
+    }
+  }
+}
+```
+
+この設定では、`pip install flask` と `pdm install flask` は両方とも、`uv` または `bun` を使用するよう Claude に伝えるメッセージとともに拒否されます。`uv pip install flask` のようなコマンドは `uv` がアローリストにあり最初にチェックされるため許可されます。
+
+---
+
+## AI の動作
+
+エージェントが行き詰まったり予期しない動作をしたりする場合に検出します。
+
+### `warn-repeated-tool-calls`
+
+**イベント:** PreToolUse（すべてのツール）  
+**デフォルト:** 同じツールが同じパラメーターで3回以上呼び出された場合、再考するよう Claude に指示します。これはエージェントがループにはまっているよくあるサインです。
+
+パラメーターなし。
+
+---
+
+## ワークフロー
+
+セッション終了時の規律あるワークフローを強制します。これらのポリシーは **Stop** イベントで動作し、各条件が満たされるまでエージェントの停止を拒否します。自然な依存チェーン（コミット → プッシュ → PR → CI）に従います。ポリシーが拒否すると、チェーン内の後続ポリシーはスキップされます（deny がショートサーキットします）。
+
+すべてのワークフローポリシーは**フェールオープン**です：必要なツールが利用できない場合（例：`gh` がインストールされていない、git リモートがない）、ポリシーはチェックがスキップされた理由を説明する情報メッセージとともに許可します。
+
+### CLI ごとの Stop セマンティクス
+
+Stop の強制は、サポートされている6つの CLI によって多少異なります。それぞれが異なる「エージェント完了」フックコントラクトを公開しているためです。**結果**は同じです（ワークフローゲートが失敗している間はエージェントが停止できない）が、**仕組み**は異なります。以下の表に要約します。`require-*-before-stop` ポリシーを有効にする前に理解しておく価値のあるユーザーに見えるような特異点は Pi のみです。
+
+| CLI | ゲートが発動するタイミング | 表示内容 |
+|---|---|---|
+| Claude Code | 同じエージェントループ、即座 | Claude は作業を続けます。問題を修正してから再度終了を試みます。あなたには中断は見えません。 |
+| Codex | 同じエージェントループ、即座 | Claude と同じ。 |
+| GitHub Copilot CLI | 同じエージェントループ、即座 | Claude と同じ（Copilot の `{decision:"block", reason}` リトライチャネルを使用。Copilot CLI 1.0.41 に対して実験的に検証済み）。 |
+| Cursor Agent | 同じエージェントループ、即座 | Claude と同じ（Cursor の `{followup_message}` チャネルを使用。`loop_limit` でキャップ、デフォルト5回リトライ）。 |
+| OpenCode | 同じエージェントループ、即座 | Claude と同じ（OpenCode の `client.session.prompt(...)` SDK 呼び出しが `hookSpecificOutput.additionalContext` を通じてルーティングされます）。 |
+| **Pi (pi-coding-agent)** | **次のユーザーターン** | **Pi はゲートが発動するとき visibly に停止します**。エージェントループが終了し、プロンプトに戻されます。ゲートは次にプロンプトを送信するときに発動します。failproofai はそのターンのシステムプロンプトの先頭に `MANDATORY ACTION REQUIRED` ディレクティブを追加し、LLM にリクエストを実行する前にワークフローステップ（コミット、プッシュなど）を完了するよう指示します。 |
+
+<Note>
+**Pi の制限。** Pi の `AgentEndEvent`（Claude の `Stop` フックに相当するアップストリームイベント）には Result タイプがありません。発動する時点で Pi のエージェントループはすでに終了しています。Pi は Claude / Copilot / Cursor / OpenCode のように同じループをリトライすることを強制できません。failproofai はゲートを Pi の `before_agent_start` イベント（次のユーザープロンプトの後に発動）に移すことで、ワークフローチェックが現在のターンではなく次のターンで強制されるようにします。
+
+**実際にどういう意味か：**
+
+- Pi が停止した後、deny の理由は Pi セッション ID をキーとしてメモリ内にキャプチャされます。同じ Pi プロセスで次に送信するプロンプトがそれを取り出します。LLM はシステムプロンプトの先頭に `MANDATORY ACTION REQUIRED` ディレクティブを見て、コミット（またはプッシュ / PR オープン / CI 待機）を行い、その後リクエストを続行します。キャプチャされた deny の理由はワンショットです。一度取り出されるとゲートはクリアされます。
+- ゲートは Pi のプロセスライフタイムに依存します。ターン間に Pi を `Ctrl+C` するか終了すると、インメモリエントリはプロセスとともにドロップされ、ゲートはミスされます。Claude、Copilot、Cursor、OpenCode も同じ制約があります（エージェントを強制終了するとゲートはミスされます）。Pi はエージェントがゲートが発動する前に visibly に終了するため、より目立つだけです。
+- 保留中の deny は、任意の理由（`new` / `resume` / `fork` / `quit`）による `session_shutdown` でもクリアされます。そのため、以前のセッションからの古いゲートが同じ Pi プロセスで開始された新しいセッションに漏れることはありません。
+
+Claude スタイルの同一ループリトライが必要な場合は、他の5つのサポートされている CLI のいずれかで `Stop` ポリシーを実行してください。`AgentEndEvent` に将来の Result タイプが追加されてこのギャップを埋められるよう、Pi のアップストリームを追跡しています。
+</Note>
+
+### `require-commit-before-stop`
+
+**イベント:** Stop  
+**デフォルト:** コミットされていない変更（変更済み、ステージ済み、または未追跡ファイル）がある場合に停止を拒否します。ワーキングディレクトリがクリーンな場合は情報メッセージを返します。
+
+パラメーターなし。
+
+---
+
+### `require-push-before-stop`
+
+**イベント:** Stop  
+**デフォルト:** プッシュされていないコミットがある場合、または現在のブランチにリモートトラッキングブランチがない場合に停止を拒否します。必要に応じてトラッキングブランチを作成するために `git push -u` を提案します。リモートが設定されていない場合はフェールオープンします。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `remote` | `string` | `"origin"` | プッシュ先のリモート名。 |
+
+**例:**
+
+```json
+{
+  "policyParams": {
+    "require-push-before-stop": {
+      "remote": "upstream"
+    }
+  }
+}
+```
+
+---
+
+### `require-pr-before-stop`
+
+**イベント:** Stop  
+**デフォルト:** 現在のブランチにプルリクエストが存在しない場合、またはマージされずにクローズされた既存の PR がある場合に停止を拒否します。`gh pr create` で PR を作成するよう Claude に指示します。PR が**マージ**されると、ポリシーは許可します（作業がリリースされた）。そしてブランチから切り替えるヒントを提供します（`git checkout main && git pull`）。
+
+パラメーターなし。
+
+<Note>
+このポリシーには [GitHub CLI](https://cli.github.com/)（`gh`）のインストールと認証が必要です。
+プルリクエストへの読み取りアクセスのために `repo` スコープを持つ個人アクセストークンで `gh auth login` を実行してください。`gh` がインストールされていないか認証されていない場合、ポリシーはフェールオープンし、その理由を Claude に報告します。
+</Note>
+
+---
+
+### `require-no-conflicts-before-stop`
+
+**イベント:** Stop  
+**デフォルト:** 現在のブランチがベースブランチにクリーンにマージできない場合に停止を拒否します。ポリシーはまずブランチに GitHub 上の `OPEN` PR があることを確認します。PR がない場合は強制するマージターゲットがないため、ポリシー全体がショートサーキットして許可します。`OPEN` PR が確認されると、2つの独立したプローブが実行されます：
+
+1. **ローカル** — `git merge-tree --write-tree --name-only origin/<baseBranch> HEAD`。コンフリクトが発生した場合、deny メッセージには Claude が正確に何を解決すべきかがわかるよう、コンフリクトしたファイル名が記載されます。
+2. **GitHub** — プレチェックですでに取得した `gh pr view --json mergeable,state` の結果を再利用します。古いローカルの `origin/<baseBranch>` が見逃すコンフリクト（例：最後のフェッチ以降に誰かが `main` にコンフリクトする PR をマージした場合）を検出します。`CONFLICTING` の結果は拒否します。`UNKNOWN` の結果も拒否し、GitHub が再計算する間に約10秒待ってから再度停止を試みる前に再チェックするよう Claude に指示します。これにより GitHub が再計算する間の偽陰性を防ぎます。
+
+以下の場合は完全にスキップします（許可）：`gh` がインストールされていない、ブランチに PR が存在しない、PR の状態が `OPEN` でない（例：`MERGED`、`CLOSED`）、または `gh pr view` が解析不能な出力を返した場合。`origin/<baseBranch>` がローカルに存在しない場合や、ベースより ahead のコミットがない場合もフェールオープンします。これらの Layer 1 のフォールスルーは、許可する前にキャッシュされた PR のマージ可能性を引き続き参照します。
+
+**パラメーター:**
+
+| パラメーター | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `baseBranch` | `string` | `"main"` | コンフリクトをチェックするベースブランチ。 |
+
+<Note>
+このポリシーには GitHub CLI（`gh`）が必要です。ポリシーはコンフリクトプローブを実行する前に `gh pr view` を使用して `OPEN` PR が存在することを確認します。`gh` がない場合、ポリシーはショートサーキットして許可します。プルリクエストへの読み取りアクセスのために `repo` スコープを持つ個人アクセストークンで `gh auth login` を実行してください。
+</Note>
+
+---
+
+### `require-ci-green-before-stop`
+
+**イベント:** Stop  
+**デフォルト:** 現在のブランチで CI チェックが失敗しているか実行中の場合に停止を拒否します。GitHub Actions ワークフロー実行とサードパーティボットチェック（例：CodeRabbit、SonarCloud、Codecov）の両方をチェックします。`skipped`、`cancelled`、`neutral` の結論は失敗としません（後者は例えば、アプリが意図的に success/failure ではなく neutral を報告する外部コントリビューターの PR に対する Socket Security アラートをカバーします）。すべてのチェックが通過した場合は情報メッセージを返します。
+
+パラメーターなし。
+
+<Note>
+このポリシーには [GitHub CLI](https://cli.github.com/)（`gh`）のインストールと認証が必要です。
+Actions ワークフロー実行および Checks API への読み取りアクセスのために `repo` スコープを持つ個人アクセストークンで `gh auth login` を実行してください。`gh` がインストールされていないか認証されていない場合、ポリシーはフェールオープンし、その理由を Claude に報告します。
+</Note>
+
+---
+
+---
+
+## 個々のポリシーの無効化
+
+設定の `enabledPolicies` から特定のポリシーを削除するか、ダッシュボードの Policies タブでオフに切り替えます。
+
+```json
+{
+  "enabledPolicies": [
+    "block-rm-rf",
+    "sanitize-api-keys"
+  ]
+}
+```
+
+`enabledPolicies` にリストされていないポリシーは、`policyParams` にエントリが存在しても実行されません。

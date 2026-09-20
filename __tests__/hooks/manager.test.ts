@@ -1,0 +1,1195 @@
+// @vitest-environment node
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { globalPolicyConfigFile } from "../../src/hooks/fp-home";
+
+vi.mock("node:fs", () => ({
+  readFileSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  existsSync: vi.fn(),
+  mkdirSync: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({
+  execSync: vi.fn(),
+}));
+
+vi.mock("../../src/hooks/install-prompt", () => ({
+  promptPolicySelection: vi.fn(() =>
+    Promise.resolve(["block-sudo", "block-env-files", "sanitize-jwt"]),
+  ),
+}));
+
+vi.mock("../../src/hooks/hooks-config", () => ({
+  readHooksConfig: vi.fn(() => ({ enabledPolicies: [] })),
+  // listHooks resolves the project root by walking up to the nearest
+  // `.failproofai` marker, the same way enforcement does. The real function
+  // hits the filesystem; for these tests the cwd IS the project root.
+  findProjectConfigDir: vi.fn((start: string) => start),
+  readMergedHooksConfig: vi.fn(() => ({ enabledPolicies: [] })),
+  configuredCustomPolicyPaths: vi.fn((config: { customPoliciesPaths?: string[]; customPoliciesPath?: string }) =>
+    config.customPoliciesPaths ?? (config.customPoliciesPath ? [config.customPoliciesPath] : [])),
+  writeHooksConfig: vi.fn(),
+  readScopedHooksConfig: vi.fn(() => ({ enabledPolicies: [] })),
+  writeScopedHooksConfig: vi.fn(),
+  getConfigPathForScope: vi.fn((scope: string, cwd?: string) => {
+    if (scope === "user") return globalPolicyConfigFile();
+    if (scope === "local") return `${cwd ?? process.cwd()}/.failproofai/policies-config.local.json`;
+    return `${cwd ?? process.cwd()}/.failproofai/policies-config.json`;
+  }),
+}));
+
+// The pack layer, mocked so `installHooks` cannot reach a real manifest or the
+// network. `addPack` FETCHES — it is the one path in `policies --install` that
+// needs it — and the tests below assert precisely that a bare `--install` never
+// gets there.
+vi.mock("../../src/hooks/pack-store", () => ({
+  CORE_SOURCE: "FailproofAI/policies",
+  addPack: vi.fn(() => Promise.resolve()),
+  setPackPolicyEnabled: vi.fn(() => true),
+}));
+
+vi.mock("../../src/hooks/pack-manifest", () => ({
+  hasInstalledPacks: vi.fn(() => false),
+  readInstalledPacks: vi.fn(() => ({ packs: [], errors: [] })),
+}));
+
+vi.mock("../../src/hooks/hook-telemetry", () => ({
+  trackHookEvent: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../../src/hooks/daemon-service", () => ({
+  probeDaemonPolicyEvaluation: vi.fn(() => Promise.resolve(true)),
+}));
+
+vi.mock("../../lib/telemetry-id", () => ({
+  getInstanceId: vi.fn(() => "test-instance-id"),
+  hashToId: vi.fn((raw: string) => `hashed:${raw}`),
+}));
+
+vi.mock("../../src/hooks/custom-hooks-loader", () => ({
+  loadCustomHooks: vi.fn(() => Promise.resolve([])),
+  discoverPolicyFiles: vi.fn(() => []),
+}));
+
+const USER_SETTINGS_PATH = resolve(homedir(), ".claude", "settings.json");
+const PROJECT_SETTINGS_PATH = resolve(process.cwd(), ".claude", "settings.json");
+const LOCAL_SETTINGS_PATH = resolve(process.cwd(), ".claude", "settings.local.json");
+
+describe("hooks/manager", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(execSync).mockReturnValue("/usr/local/bin/failproofai\n");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    // `listHooks` prints one block through `process.stdout` rather than a
+    // console.log per line. These tests read their output from console.log's
+    // recorded calls, so the stream feeds that same recorder — one line per
+    // call, exactly as before — instead of the assertions being rewritten.
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      for (const line of String(chunk).split("\n")) console.log(line);
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe("installHooks", () => {
+    it("refuses to enable Hermes before a daemon proves native policy evaluation support", async () => {
+      const { probeDaemonPolicyEvaluation } = await import("../../src/hooks/daemon-service");
+      const { writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(probeDaemonPolicyEvaluation).mockResolvedValue(false);
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await expect(
+        installHooks(undefined, "user", undefined, false, undefined, undefined, false, ["hermes"]),
+      ).rejects.toThrow("failproofai config");
+
+      expect(writeScopedHooksConfig).not.toHaveBeenCalled();
+      expect(writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it("enforces daemon readiness from integration metadata rather than a Hermes ID check", async () => {
+      const { probeDaemonPolicyEvaluation } = await import("../../src/hooks/daemon-service");
+      const { writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      const { claudeCode } = await import("../../src/hooks/integrations");
+      const previous = claudeCode.requiresHealthyDaemon;
+      claudeCode.requiresHealthyDaemon = true;
+      vi.mocked(probeDaemonPolicyEvaluation).mockResolvedValue(false);
+
+      try {
+        const { installHooks } = await import("../../src/hooks/manager");
+        await expect(
+          installHooks(undefined, "user", undefined, false, undefined, undefined, false, ["claude"]),
+        ).rejects.toThrow("Claude Code requires a compatible failproofaid daemon with native policy evaluation");
+      } finally {
+        claudeCode.requiresHealthyDaemon = previous;
+      }
+
+      expect(writeScopedHooksConfig).not.toHaveBeenCalled();
+      expect(writeFileSync).not.toHaveBeenCalled();
+    });
+
+    // 28, not 29: WorktreeCreate is deliberately not installed — Claude uses it
+    // as a worktree-PATH PROVIDER (first hook's stdout becomes the directory),
+    // and our silent-on-allow contract broke `claude --worktree` for every user.
+    it("installs hooks for all 28 installed event types into empty settings", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks();
+
+      expect(writeFileSync).toHaveBeenCalledOnce();
+      const [path, content] = vi.mocked(writeFileSync).mock.calls[0];
+      expect(path).toBe(USER_SETTINGS_PATH);
+
+      const written = JSON.parse(content as string);
+      expect(Object.keys(written.hooks)).toHaveLength(28);
+      expect(written.hooks.WorktreeCreate).toBeUndefined();
+
+      for (const [eventType, matchers] of Object.entries(written.hooks)) {
+        expect(matchers).toHaveLength(1);
+        const hook = (matchers as Array<{ hooks: Array<Record<string, unknown>> }>)[0].hooks[0];
+        expect(hook.__failproofai_hook__).toBe(true);
+        expect(hook.type).toBe("command");
+        expect(hook.timeout).toBe(60);
+        expect(hook.command).toBe(`"/usr/local/bin/failproofai" --hook ${eventType}`);
+      }
+    });
+
+    // `--install` with no names WIRES HOOKS. It does not choose policies, and
+    // it used to: a second picker opened here over BUILTIN_POLICIES — the
+    // compiled catalog, which is not how policies arrive any more — and wrote
+    // its answer to `enabledPolicies`, while every pack records its selection
+    // in installed.json. Two enabled-sets, one silently overwriting the other:
+    // `policies remove block-env-files` then `policies --install` put
+    // block-env-files back on, because the picker pre-ticked from the legacy
+    // key and saved all of it again.
+    it("interactive install asks nothing and leaves the policy selection alone", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { readScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({ enabledPolicies: ["block-sudo"] });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      const { promptPolicySelection } = await import("../../src/hooks/install-prompt");
+      const { writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+
+      await installHooks();
+
+      expect(promptPolicySelection).not.toHaveBeenCalled();
+      // Written back UNCHANGED — not re-derived, not defaulted, not widened.
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        { enabledPolicies: ["block-sudo"] },
+        "user",
+        undefined,
+      );
+    });
+
+    it("non-interactive: --install-hooks all enables all policies", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      const { writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      const { promptPolicySelection } = await import("../../src/hooks/install-prompt");
+
+      await installHooks(["all"]);
+
+      expect(promptPolicySelection).not.toHaveBeenCalled();
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        { enabledPolicies: expect.arrayContaining(["block-sudo", "block-rm-rf", "sanitize-jwt"]) },
+        "user",
+        undefined,
+      );
+    });
+
+    it("non-interactive: --install-hooks with specific names", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      const { writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+
+      await installHooks(["block-sudo", "block-rm-rf"]);
+
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        { enabledPolicies: ["block-sudo", "block-rm-rf"] },
+        "user",
+        undefined,
+      );
+    });
+
+    it("non-interactive: rejects unknown policy names", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+
+      await expect(installHooks(["block-sudo", "fake-policy"])).rejects.toThrow("Unknown policy name");
+    });
+
+    // The other half of the same bug: `fromPack` is ADDITIVE — it can switch a
+    // policy on and never off — so re-applying whatever sat in `enabledPolicies`
+    // resurrected a policy the user had deliberately removed. Nothing writes
+    // pack selections to that key any more, so anything left in it is a
+    // leftover from before packs, kept for the migration shim. A leftover is
+    // not a decision.
+    it("does not push the legacy enabled list back into an installed pack", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { readScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: ["block-sudo", "block-env-files"],
+      });
+      const { addPack, setPackPolicyEnabled } = await import("../../src/hooks/pack-store");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks();
+
+      expect(addPack).not.toHaveBeenCalled();
+      expect(setPackPolicyEnabled).not.toHaveBeenCalled();
+    });
+
+    it("preserves existing non-failproofai hooks", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      const existingSettings = {
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [
+                { type: "command", command: "my-custom-hook", timeout: 5000 },
+              ],
+            },
+          ],
+        },
+      };
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify(existingSettings));
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks();
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      expect(written.hooks.PreToolUse).toHaveLength(2);
+      expect(written.hooks.PreToolUse[0].hooks[0].command).toBe("my-custom-hook");
+      expect(written.hooks.PreToolUse[1].hooks[0].__failproofai_hook__).toBe(true);
+    });
+
+    it("re-install updates existing failproofai hooks without duplicating", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      const existingSettings = {
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: "/old/path/failproofai --hook PreToolUse",
+                  timeout: 10_000,
+                  __failproofai_hook__: true,
+                },
+              ],
+            },
+          ],
+        },
+      };
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify(existingSettings));
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks();
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      expect(written.hooks.PreToolUse).toHaveLength(1);
+      expect(written.hooks.PreToolUse[0].hooks[0].command).toBe(
+        '"/usr/local/bin/failproofai" --hook PreToolUse',
+      );
+    });
+
+    it("creates settings file when none exists", async () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks();
+
+      expect(writeFileSync).toHaveBeenCalledOnce();
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+      expect(Object.keys(written.hooks)).toHaveLength(28);
+    });
+
+    it("uses 'where' on Windows and handles multi-line output", async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+      vi.mocked(execSync).mockReturnValue("C:\\Program Files\\failproofai\\failproofai.exe\nC:\\other\\failproofai.exe\n");
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks();
+
+      expect(execSync).toHaveBeenCalledWith("where failproofai", { encoding: "utf8" });
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+      const hook = written.hooks.PreToolUse[0].hooks[0];
+      expect(hook.command).toBe('"C:\\Program Files\\failproofai\\failproofai.exe" --hook PreToolUse');
+
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    });
+
+    it("throws when failproofai binary is not found", async () => {
+      vi.mocked(execSync).mockImplementation(() => {
+        throw new Error("not found");
+      });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await expect(installHooks()).rejects.toThrow("failproofai binary not found");
+    });
+
+    it("default scope is user", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"]);
+
+      const [path] = vi.mocked(writeFileSync).mock.calls[0];
+      expect(path).toBe(USER_SETTINGS_PATH);
+    });
+
+    it("install at project scope writes to {cwd}/.claude/settings.json", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "project");
+
+      const [path] = vi.mocked(writeFileSync).mock.calls[0];
+      expect(path).toBe(PROJECT_SETTINGS_PATH);
+    });
+
+    it("project scope uses portable npx -y failproofai command for all event types", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "project");
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      for (const [eventType, matchers] of Object.entries(written.hooks)) {
+        const hook = (matchers as Array<{ hooks: Array<Record<string, unknown>> }>)[0].hooks[0];
+        expect(hook.command).toBe(`npx -y failproofai --hook ${eventType}`);
+      }
+    });
+
+    it("user scope uses absolute binary path, not npx", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "user");
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      const hook = written.hooks.PreToolUse[0].hooks[0];
+      expect(hook.command).toBe('"/usr/local/bin/failproofai" --hook PreToolUse');
+    });
+
+    it("local scope uses absolute binary path, not npx", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "local");
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      const hook = written.hooks.PreToolUse[0].hooks[0];
+      expect(hook.command).toBe('"/usr/local/bin/failproofai" --hook PreToolUse');
+    });
+
+    it("re-install on project scope migrates absolute-path hooks to npx format", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      const existingSettings = {
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: '"/old/path/failproofai" --hook PreToolUse',
+                  timeout: 10_000,
+                  __failproofai_hook__: true,
+                },
+              ],
+            },
+          ],
+        },
+      };
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify(existingSettings));
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "project");
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      expect(written.hooks.PreToolUse[0].hooks[0].command).toBe(
+        "npx -y failproofai --hook PreToolUse",
+      );
+    });
+
+    it("detects npx-format hooks as failproofai hooks (legacy fallback without marker)", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      const settings = {
+        hooks: {
+          PreToolUse: [{
+            hooks: [{
+              type: "command",
+              command: "npx -y failproofai --hook PreToolUse",
+              timeout: 60000,
+            }],
+          }],
+        },
+      };
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify(settings));
+
+      const { hooksInstalledInSettings } = await import("../../src/hooks/manager");
+      expect(hooksInstalledInSettings("project")).toBe(true);
+    });
+
+    it("project scope console output shows portable command info", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "project");
+
+      const logs = vi.mocked(console.log).mock.calls.map((c) => c[0]);
+      expect(logs.some((l: unknown) => typeof l === "string" && (l as string).includes("npx -y failproofai"))).toBe(true);
+      expect(logs.some((l: unknown) => typeof l === "string" && (l as string).includes("committed to git"))).toBe(true);
+      expect(logs.some((l: unknown) => typeof l === "string" && (l as string).includes("Binary:"))).toBe(false);
+    });
+
+    it("install at local scope writes to {cwd}/.claude/settings.local.json", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "local");
+
+      const [path] = vi.mocked(writeFileSync).mock.calls[0];
+      expect(path).toBe(LOCAL_SETTINGS_PATH);
+    });
+
+    it("install with cwd writes to that directory's .claude/settings.json", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "project", "/tmp/my-project");
+
+      const [path] = vi.mocked(writeFileSync).mock.calls[0];
+      expect(path).toBe(resolve("/tmp/my-project", ".claude", "settings.json"));
+    });
+
+    it("install with cwd at local scope writes to that directory", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "local", "/tmp/my-project");
+
+      const [path] = vi.mocked(writeFileSync).mock.calls[0];
+      expect(path).toBe(resolve("/tmp/my-project", ".claude", "settings.local.json"));
+    });
+
+    it("install with cwd at user scope ignores cwd", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "user", "/tmp/my-project");
+
+      const [path] = vi.mocked(writeFileSync).mock.calls[0];
+      expect(path).toBe(USER_SETTINGS_PATH);
+    });
+
+    it("warns when hooks exist in another scope", async () => {
+      // Mock: project scope has existing hooks, installing to user scope
+      vi.mocked(existsSync).mockImplementation((p) => {
+        return p === PROJECT_SETTINGS_PATH || p === USER_SETTINGS_PATH;
+      });
+      const projectSettings = {
+        hooks: {
+          PreToolUse: [{
+            hooks: [{ type: "command", command: "failproofai --hook PreToolUse", timeout: 10000, __failproofai_hook__: true }],
+          }],
+        },
+      };
+      vi.mocked(readFileSync).mockImplementation((p) => {
+        if (p === PROJECT_SETTINGS_PATH) return JSON.stringify(projectSettings);
+        return "{}";
+      });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(["all"], "user");
+
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining("Warning: Failproof AI hooks are also installed"),
+      );
+    });
+
+    it("fires hooks_installed telemetry with correct properties", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      const { trackHookEvent } = await import("../../src/hooks/hook-telemetry");
+
+      await installHooks(["block-sudo", "block-rm-rf"], "user");
+
+      expect(trackHookEvent).toHaveBeenCalledWith(
+        "test-instance-id",
+        "hooks_installed",
+        expect.objectContaining({
+          scope: "user",
+          policies: ["block-sudo", "block-rm-rf"],
+          policy_count: 2,
+          platform: expect.any(String),
+          arch: expect.any(String),
+          os_release: expect.any(String),
+          hostname_hash: expect.any(String),
+        }),
+      );
+    });
+
+    it("saves resolved absolute customPoliciesPath when customPoliciesPath provided", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { loadCustomHooks } = await import("../../src/hooks/custom-hooks-loader");
+      vi.mocked(loadCustomHooks).mockResolvedValue([
+        { name: "test-hook", fn: async () => ({ decision: "allow" as const }) },
+      ]);
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      const { writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+
+      await installHooks(["block-sudo"], "user", undefined, false, undefined, "/tmp/my-hooks.js");
+
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customPoliciesPaths: [resolve("/tmp/my-hooks.js")],
+        }),
+        "user",
+        undefined,
+      );
+      const logs = vi.mocked(console.log).mock.calls.map((c) => c[0]);
+      expect(logs.some((l: unknown) => typeof l === "string" && l.includes(resolve("/tmp/my-hooks.js")))).toBe(true);
+    });
+
+    // Installing with --custom is ADDITIVE, mirroring enabledPolicies in the
+    // same function. Replacing was the surprising half of the old single-path
+    // field: `-c a` then `-c b` left only `b`, and nothing said `a` had stopped
+    // applying — the policies just quietly went inert.
+    it("adds to the configured paths instead of replacing them", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { loadCustomHooks } = await import("../../src/hooks/custom-hooks-loader");
+      vi.mocked(loadCustomHooks).mockResolvedValue([
+        { name: "test-hook", fn: async () => ({ decision: "allow" as const }) },
+      ]);
+      const { readScopedHooksConfig, writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: [],
+        customPoliciesPaths: [resolve("/tmp/a.js")],
+      });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks([], "user", undefined, false, undefined, "/tmp/b.js");
+
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customPoliciesPaths: [resolve("/tmp/a.js"), resolve("/tmp/b.js")],
+        }),
+        "user",
+        undefined,
+      );
+    });
+
+    it("replace: true rewrites the policy set without touching custom or convention policies", async () => {
+      // What the configure wizard's Recommended path relies on. `replace: true`
+      // makes the given list the whole enabled set — which is the point, since
+      // unticking a policy has to remove it — but it must NOT reach the two
+      // things a user configured separately:
+      //
+      //   • customPoliciesPaths — explicit `-c` files. Wiping them would stop
+      //     policies loading that the user never touched in this run.
+      //   • customPoliciesEnabled — the convention-discovery flag for
+      //     `.failproofai/policies/*.mjs`. Writing `false` here would disable
+      //     every one of those files as a side effect of choosing a preset.
+      //
+      // Both survive because the wizard passes no `customPoliciesPath` and
+      // `removeCustomHooks: false`, so neither branch that rewrites them runs
+      // and `{...previousConfig}` carries them through. That is load-bearing
+      // rather than incidental, so it is asserted.
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { readScopedHooksConfig, writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: ["block-kubectl"],
+        customPoliciesPaths: [resolve("/tmp/mine.js")],
+        customPoliciesEnabled: true,
+      });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks(
+        ["block-sudo", "block-rm-rf"],
+        "user",
+        undefined,
+        false,
+        "configure-wizard",
+        undefined,
+        false,
+        ["claude"],
+        { replace: true, quiet: true },
+      );
+
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // Replaced, as asked — block-kubectl is gone.
+          enabledPolicies: ["block-sudo", "block-rm-rf"],
+          // Preserved, untouched.
+          customPoliciesPaths: [resolve("/tmp/mine.js")],
+          customPoliciesEnabled: true,
+        }),
+        "user",
+        undefined,
+      );
+    });
+
+    it("does not duplicate a path that is already configured", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { loadCustomHooks } = await import("../../src/hooks/custom-hooks-loader");
+      vi.mocked(loadCustomHooks).mockResolvedValue([
+        { name: "test-hook", fn: async () => ({ decision: "allow" as const }) },
+      ]);
+      const { readScopedHooksConfig, writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: [],
+        customPoliciesPaths: [resolve("/tmp/a.js")],
+      });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks([], "user", undefined, false, undefined, "/tmp/a.js");
+
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ customPoliciesPaths: [resolve("/tmp/a.js")] }),
+        "user",
+        undefined,
+      );
+    });
+
+    // A carried-over path whose file was deleted must not make every future
+    // install fail — the strict validation below would exit(1) on it.
+    it("drops a carried-over path whose file no longer exists", async () => {
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      vi.mocked(existsSync).mockImplementation((p: unknown) => String(p) !== resolve("/tmp/gone.js"));
+      const { loadCustomHooks } = await import("../../src/hooks/custom-hooks-loader");
+      vi.mocked(loadCustomHooks).mockResolvedValue([
+        { name: "test-hook", fn: async () => ({ decision: "allow" as const }) },
+      ]);
+      const { readScopedHooksConfig, writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: [],
+        customPoliciesPaths: [resolve("/tmp/gone.js")],
+      });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks([], "user", undefined, false, undefined, "/tmp/b.js");
+
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ customPoliciesPaths: [resolve("/tmp/b.js")] }),
+        "user",
+        undefined,
+      );
+    });
+
+    // The configure wizard passes replace=true so its selection is authoritative.
+    it("replaces rather than adds when replace is set", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { loadCustomHooks } = await import("../../src/hooks/custom-hooks-loader");
+      vi.mocked(loadCustomHooks).mockResolvedValue([
+        { name: "test-hook", fn: async () => ({ decision: "allow" as const }) },
+      ]);
+      const { readScopedHooksConfig, writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: [],
+        customPoliciesPaths: [resolve("/tmp/a.js")],
+      });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+      await installHooks([], "user", undefined, false, undefined, "/tmp/b.js", false, undefined, { replace: true });
+
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ customPoliciesPaths: [resolve("/tmp/b.js")] }),
+        "user",
+        undefined,
+      );
+    });
+
+    it("validates and saves multiple explicit custom policy paths", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { loadCustomHooks } = await import("../../src/hooks/custom-hooks-loader");
+      vi.mocked(loadCustomHooks).mockResolvedValue([
+        { name: "test-hook", fn: async () => ({ decision: "allow" as const }) },
+      ]);
+      const { installHooks } = await import("../../src/hooks/manager");
+      const { writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+
+      await installHooks(["block-sudo"], "user", undefined, false, undefined, ["/tmp/a.js", "/tmp/b.js"]);
+
+      expect(loadCustomHooks).toHaveBeenCalledTimes(2);
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ customPoliciesPaths: [resolve("/tmp/a.js"), resolve("/tmp/b.js")] }),
+        "user",
+        undefined,
+      );
+    });
+
+    it("treats an empty custom policy path array as absent", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { readScopedHooksConfig, writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: ["block-sudo"],
+        customPoliciesPath: "/tmp/legacy.js",
+      });
+      const { loadCustomHooks } = await import("../../src/hooks/custom-hooks-loader");
+      const { installHooks } = await import("../../src/hooks/manager");
+
+      await installHooks(["block-sudo"], "user", undefined, false, undefined, []);
+
+      expect(loadCustomHooks).not.toHaveBeenCalled();
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ customPoliciesPath: "/tmp/legacy.js" }),
+        "user",
+        undefined,
+      );
+    });
+
+    it("clears customPoliciesPath when removeCustomHooks is true", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+      const { readScopedHooksConfig, writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: ["block-sudo"],
+        customPoliciesPath: "/tmp/old-hooks.js",
+      });
+
+      const { installHooks } = await import("../../src/hooks/manager");
+
+      await installHooks(["block-sudo"], "user", undefined, false, undefined, undefined, true);
+
+      const [[written]] = vi.mocked(writeScopedHooksConfig).mock.calls;
+      expect((written as unknown as Record<string, unknown>).customPoliciesPath).toBeUndefined();
+      expect((written as unknown as Record<string, unknown>).customPoliciesPaths).toBeUndefined();
+      const logs = vi.mocked(console.log).mock.calls.map((c) => c[0]);
+      expect(logs.some((l: unknown) => typeof l === "string" && l.includes("Custom hooks path cleared"))).toBe(true);
+    });
+  });
+
+  describe("removeHooks", () => {
+    it("removes only failproofai hooks, preserving others", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      const settings = {
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [
+                { type: "command", command: "my-custom-hook", timeout: 5000 },
+              ],
+            },
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: "/usr/local/bin/failproofai --hook PreToolUse",
+                  timeout: 10_000,
+                  __failproofai_hook__: true,
+                },
+              ],
+            },
+          ],
+          SessionStart: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: "/usr/local/bin/failproofai --hook SessionStart",
+                  timeout: 10_000,
+                  __failproofai_hook__: true,
+                },
+              ],
+            },
+          ],
+        },
+        someOtherSetting: true,
+      };
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify(settings));
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks();
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      expect(written.hooks.PreToolUse).toHaveLength(1);
+      expect(written.hooks.PreToolUse[0].hooks[0].command).toBe("my-custom-hook");
+      expect(written.hooks.SessionStart).toBeUndefined();
+      expect(written.someOtherSetting).toBe(true);
+    });
+
+    it("removes legacy failproofai hooks that lack the __failproofai_hook__ marker", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      const settings = {
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [
+                { type: "command", command: "other-tool --check", timeout: 5000 },
+                // Legacy entry: command matches but no marker
+                { type: "command", command: "/usr/local/bin/failproofai --hook PreToolUse", timeout: 60_000 },
+              ],
+            },
+          ],
+          SessionStart: [
+            {
+              hooks: [
+                { type: "command", command: "failproofai --hook SessionStart", timeout: 60_000 },
+              ],
+            },
+          ],
+        },
+        someOtherSetting: true,
+      };
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify(settings));
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks();
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      // Legacy failproofai hook removed; other-tool hook preserved
+      expect(written.hooks.PreToolUse).toHaveLength(1);
+      expect(written.hooks.PreToolUse[0].hooks[0].command).toBe("other-tool --check");
+
+      // SessionStart fully removed (was only legacy failproofai hook)
+      expect(written.hooks.SessionStart).toBeUndefined();
+      expect(written.someOtherSetting).toBe(true);
+    });
+
+    it("removes hooks object when empty after cleanup", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      const settings = {
+        hooks: {
+          SessionStart: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: "/usr/local/bin/failproofai --hook SessionStart",
+                  timeout: 10_000,
+                  __failproofai_hook__: true,
+                },
+              ],
+            },
+          ],
+        },
+        someOtherSetting: true,
+      };
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify(settings));
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks();
+
+      const [, content] = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(content as string);
+
+      expect(written.hooks).toBeUndefined();
+      expect(written.someOtherSetting).toBe(true);
+    });
+
+    it("refuses to disable the alwaysOn self-protection policy", async () => {
+      // Stripping it from enabledPolicies writes fine and changes nothing:
+      // `registerBuiltinPolicies` registers it regardless. Reporting success
+      // would tell the operator a policy is off while it keeps denying.
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+
+      await expect(removeHooks(["block-failproofai-commands"])).rejects.toThrow(
+        "Cannot disable: block-failproofai-commands",
+      );
+      expect(writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it("still disables an ordinary policy alongside the refusal check", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue("{}");
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await expect(removeHooks(["block-sudo"])).resolves.not.toThrow();
+    });
+
+    it("handles missing settings file gracefully", async () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks();
+
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining("No settings file found"),
+      );
+      expect(writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it("handles settings with no hooks key", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue('{"someOtherSetting": true}');
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks();
+
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining("No hooks found"),
+      );
+      expect(writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it("removes specific policies from config when names provided", async () => {
+      const { readScopedHooksConfig, writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: ["block-sudo", "block-rm-rf", "sanitize-jwt"],
+      });
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks(["block-sudo"]);
+
+      expect(writeScopedHooksConfig).toHaveBeenCalledWith(
+        { enabledPolicies: ["block-rm-rf", "sanitize-jwt"] },
+        "user",
+        undefined,
+      );
+      // Should NOT write to settings file
+      expect(writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it("warns about policies not currently enabled", async () => {
+      const { readScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({ enabledPolicies: ["block-sudo"] });
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks(["block-rm-rf"]);
+
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining("not currently enabled"),
+      );
+    });
+
+    it("remove with scope: 'all' removes from all files", async () => {
+      const hooksPayload = (event: string) => ({
+        hooks: {
+          [event]: [{
+            hooks: [{
+              type: "command",
+              command: `/usr/local/bin/failproofai --hook ${event}`,
+              timeout: 10_000,
+              __failproofai_hook__: true,
+            }],
+          }],
+        },
+      });
+
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockImplementation((p) => {
+        if (p === USER_SETTINGS_PATH) return JSON.stringify(hooksPayload("SessionStart"));
+        if (p === PROJECT_SETTINGS_PATH) return JSON.stringify(hooksPayload("PreToolUse"));
+        if (p === LOCAL_SETTINGS_PATH) return JSON.stringify(hooksPayload("PostToolUse"));
+        return "{}";
+      });
+
+      // Mock scoped config reads so the clear-all logic finds something to clear
+      const { readScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({ enabledPolicies: ["block-sudo"] });
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks(undefined, "all");
+
+      // Should write to all three settings files
+      expect(writeFileSync).toHaveBeenCalledTimes(3);
+
+      // Verify all files had hooks removed
+      for (const call of vi.mocked(writeFileSync).mock.calls) {
+        const written = JSON.parse(call[1] as string);
+        expect(written.hooks).toBeUndefined();
+      }
+
+      // Should clear policy config across scopes
+      const { writeScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      expect(writeScopedHooksConfig).toHaveBeenCalled();
+    });
+    it("removeHooks with cwd targets that directory", async () => {
+      const customProjectPath = resolve("/tmp/my-project", ".claude", "settings.json");
+      vi.mocked(existsSync).mockImplementation((p) => p === customProjectPath);
+      const settings = {
+        hooks: {
+          PreToolUse: [{
+            hooks: [{
+              type: "command",
+              command: "/usr/local/bin/failproofai --hook PreToolUse",
+              timeout: 10_000,
+              __failproofai_hook__: true,
+            }],
+          }],
+        },
+      };
+      vi.mocked(readFileSync).mockImplementation((p) => {
+        if (p === customProjectPath) return JSON.stringify(settings);
+        return "{}";
+      });
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      await removeHooks(undefined, "project", "/tmp/my-project");
+
+      expect(writeFileSync).toHaveBeenCalledOnce();
+      const [path] = vi.mocked(writeFileSync).mock.calls[0];
+      expect(path).toBe(customProjectPath);
+    });
+
+    it("fires hooks_removed telemetry for policy-only removal", async () => {
+      const { readScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({
+        enabledPolicies: ["block-sudo", "block-rm-rf", "sanitize-jwt"],
+      });
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      const { trackHookEvent } = await import("../../src/hooks/hook-telemetry");
+
+      await removeHooks(["block-sudo"]);
+
+      expect(trackHookEvent).toHaveBeenCalledWith(
+        "test-instance-id",
+        "hooks_removed",
+        expect.objectContaining({
+          scope: "user",
+          removal_mode: "policies",
+          policies_removed: ["block-sudo"],
+          removed_count: 1,
+          platform: expect.any(String),
+          arch: expect.any(String),
+          os_release: expect.any(String),
+          hostname_hash: expect.any(String),
+        }),
+      );
+    });
+
+    it("fires hooks_removed telemetry for full hooks removal", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      const settings = {
+        hooks: {
+          SessionStart: [{
+            hooks: [{
+              type: "command",
+              command: "/usr/local/bin/failproofai --hook SessionStart",
+              timeout: 60_000,
+              __failproofai_hook__: true,
+            }],
+          }],
+        },
+      };
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify(settings));
+
+      // readScopedHooksConfig is module-mocked; configure it to return the policies that
+      // were enabled before removal (used in the telemetry policies_removed field).
+      const { readScopedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readScopedHooksConfig).mockReturnValue({ enabledPolicies: ["sanitize-jwt", "block-sudo"] });
+
+      const { removeHooks } = await import("../../src/hooks/manager");
+      const { trackHookEvent } = await import("../../src/hooks/hook-telemetry");
+
+      await removeHooks(undefined, "user");
+
+      expect(trackHookEvent).toHaveBeenCalledWith(
+        "test-instance-id",
+        "hooks_removed",
+        expect.objectContaining({
+          scope: "user",
+          removal_mode: "hooks",
+          policies_removed: ["sanitize-jwt", "block-sudo"],
+          removed_count: expect.any(Number),
+          platform: expect.any(String),
+          arch: expect.any(String),
+          os_release: expect.any(String),
+          hostname_hash: expect.any(String),
+        }),
+      );
+    });
+  });
+
+  describe("listHooks", () => {
+    // The builtin table is gone: this build registers no policy of its own
+    // except the always-on guard, which has no row because no listing can switch
+    // it off. What the listing renders now — packs, convention files, cloud —
+    // is covered against real files in `policies-listing.test.ts`; these keep
+    // the mock-level contract that survived.
+    it("says nothing is installed, without naming policies this build no longer runs", async () => {
+      const { readMergedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readMergedHooksConfig).mockReturnValue({ enabledPolicies: [] });
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const { listHooks } = await import("../../src/hooks/manager");
+      await listHooks();
+      const output = vi.mocked(console.log).mock.calls.map((c) => c[0]).join("\n");
+
+      expect(output).toContain("nothing installed");
+      // Naming a builtin here would advertise enforcement that is not happening.
+      expect(output).not.toContain("sanitize-jwt");
+      expect(output).not.toContain("block-sudo");
+    });
+
+    it("warns when hooks exist in multiple scopes", async () => {
+      const { readMergedHooksConfig } = await import("../../src/hooks/hooks-config");
+      vi.mocked(readMergedHooksConfig).mockReturnValue({ enabledPolicies: [] });
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(
+        JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ command: "failproofai --hook PreToolUse" }] }] } }),
+      );
+
+      const { listHooks } = await import("../../src/hooks/manager");
+      await listHooks();
+      const output = vi.mocked(console.log).mock.calls.map((c) => c[0]).join("\n");
+
+      expect(output).toMatch(/multiple scopes/i);
+    });
+  });
+});

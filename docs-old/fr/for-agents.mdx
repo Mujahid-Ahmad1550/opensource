@@ -1,0 +1,38 @@
+---
+title: "Pour les agents"
+description: "Ajoutez la documentation Failproof AI à votre agent de développement en une seule commande. Compatible avec Claude Code, Cursor, Windsurf et plus encore."
+---
+
+Ajoutez la référence complète Failproof AI à votre agent de développement en une seule commande. Compatible avec Claude Code, Cursor, Windsurf et tout autre agent prenant en charge les skills.
+
+```bash
+npx skills add https://docs.befailproof.ai
+```
+
+`npx skills` détecte les agents que vous avez installés et ajoute le skill dans le bon format pour chacun d'eux automatiquement.
+
+## Ce que couvre le skill
+
+| Domaine | Contenu |
+|---------|---------|
+| Policies | Noms des policies intégrées, types d'événements, paramètres, activation/désactivation |
+| Custom policies | `customPolicies.add()`, filtres de correspondance, API `allow`/`deny`/`instruct` |
+| Objet contexte | `ctx.eventType`, `ctx.toolName`, `ctx.toolInput`, `ctx.session` |
+| Configuration | Structure de `policies-config.json`, fusion des scopes, `policyParams` |
+| CLI | `failproofai policies --install`, `--uninstall`, `--custom`, scopes |
+| Dashboard | Visionneuse de sessions, activité des policies, variables d'environnement |
+| Architecture | Flux du hook handler, codes de sortie, contrat stdin/stdout |
+
+## Le skill est-il complet ?
+
+Mintlify génère un fichier `llms.txt` à partir de toutes les pages de la navigation. La documentation Failproof AI couvre l'API complète — chaque policy, option et exemple est inclus. Si vous constatez qu'il manque quelque chose, la source est disponible à l'adresse `https://docs.befailproof.ai/llms-full.txt`.
+
+Pour un contexte ciblé, pointez directement vers une page spécifique :
+
+```bash
+# Uniquement l'API des custom policies
+npx skills add https://docs.befailproof.ai/custom-policies
+
+# Uniquement les built-in policies
+npx skills add https://docs.befailproof.ai/built-in-policies
+```

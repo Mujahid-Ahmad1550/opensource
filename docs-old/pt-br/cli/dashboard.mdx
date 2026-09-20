@@ -1,0 +1,29 @@
+---
+title: Visualizar sessões
+description: "Inicie o painel para navegar pelas sessões do agente e gerenciar políticas"
+---
+
+```bash
+failproofai
+```
+
+Inicia o painel web em `http://localhost:8020`.
+
+## Opções
+
+| Flag | Descrição |
+|------|-----------|
+| `--port <number>` | Porta para escutar (padrão: `8020`) |
+| `--allowed-origins <origins>` | Hosts/IPs separados por vírgula com permissão para acessar recursos de desenvolvimento |
+
+Para apontar o painel para uma pasta de projeto Claude diferente da padrão, defina a variável de ambiente `CLAUDE_PROJECTS_PATH` ao iniciar.
+
+## Exemplos
+
+```bash
+# Iniciar em uma porta diferente
+failproofai --port 9000
+
+# Usar um caminho de projetos Claude personalizado via variável de ambiente
+CLAUDE_PROJECTS_PATH=~/my-claude-projects failproofai
+```

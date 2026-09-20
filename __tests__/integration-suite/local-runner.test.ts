@@ -1,0 +1,1073 @@
+/**
+ * Tripwires for the LOCAL box runner (integration-suite/local/) and the
+ * daemon-mode (CANARY_DAEMON) probe path.
+ *
+ * TWO scheduled jobs moved off GH Actions for runner-minute cost — the daily
+ * integration suite (2026-08-07) and the nightly doc translation — onto a box
+ * whose entire contract is: Docker + cron + one env file. A self-contained
+ * runner image drives the HOST's Docker through the mounted socket; its baked
+ * entrypoint checks out <JOB>_REF and hands off to jobs/$CANARY_JOB.sh FROM
+ * THE CHECKOUT, so harness changes AND WHOLE NEW JOBS reach the box through
+ * git with no image rebuild. The stable canary leg probes the
+ * daemon-configured (failproofaid) path — the way-forward configuration.
+ *
+ * Everything below is shell scripts, a Dockerfile and an env template with no
+ * importable surface, so the tests parse the real files — same approach as
+ * channel-refs.test.ts, and for the same reason: the alternative is a second
+ * copy of each contract to drift against.
+ */
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const ROOT = path.join(__dirname, "../..");
+const SUITE = path.join(ROOT, "integration-suite");
+const LOCAL = path.join(SUITE, "local");
+const JOB_IMAGES = ["canary", "translate", "docs-audit"] as const;
+const dockerfiles = Object.fromEntries(
+  JOB_IMAGES.map((j) => [j, readFileSync(path.join(LOCAL, `Dockerfile.${j}`), "utf8")]),
+) as Record<(typeof JOB_IMAGES)[number], string>;
+const dockerignore = readFileSync(path.join(ROOT, ".dockerignore"), "utf8");
+const entrypointSh = readFileSync(path.join(LOCAL, "job-entrypoint.sh"), "utf8");
+const runJobSh = readFileSync(path.join(LOCAL, "run-job.sh"), "utf8");
+const dailySh = readFileSync(path.join(LOCAL, "jobs/canary.sh"), "utf8");
+const translateSh = readFileSync(path.join(LOCAL, "jobs/translate.sh"), "utf8");
+const installSh = readFileSync(path.join(LOCAL, "install.sh"), "utf8");
+const docsAuditSh = readFileSync(path.join(LOCAL, "jobs/docs-audit.sh"), "utf8");
+const workflow = readFileSync(
+  path.join(ROOT, ".github/workflows/integration-suite.yml"),
+  "utf8",
+);
+const translateWorkflow = readFileSync(
+  path.join(ROOT, ".github/workflows/translate-docs.yml"),
+  "utf8",
+);
+const probeSh = readFileSync(path.join(SUITE, "probe-cli.sh"), "utf8");
+const runSh = readFileSync(path.join(SUITE, "run.sh"), "utf8");
+const entrypoint = readFileSync(path.join(SUITE, "ci-entrypoint.sh"), "utf8");
+const handlerTs = readFileSync(path.join(ROOT, "src/hooks/handler.ts"), "utf8");
+
+describe("GHA workflow is dispatch-only", () => {
+  it("has no schedule trigger (daily runs live on the canary box)", () => {
+    // Dropping the daily cron WAS the cost decision. A schedule reappearing
+    // here must be deliberate — this makes it a conversation, not a re-spend.
+    expect(workflow).not.toMatch(/^\s*schedule:/m);
+    expect(workflow).not.toMatch(/\bcron:/);
+  });
+
+  it("keeps workflow_dispatch as the cloud fallback", () => {
+    expect(workflow).toMatch(/^\s*workflow_dispatch:/m);
+  });
+});
+
+describe("three job images, each baking the commit it runs", () => {
+  it("bakes the checkout, the deps and the build products", () => {
+    // The image IS the commit. What used to happen at 02:00 or 11:00 in front of
+    // nobody — clone, fetch, checkout, install, build — happens in CI now, where
+    // a failure is a red build rather than a night with no report.
+    for (const [job, df] of Object.entries(dockerfiles)) {
+      expect(df, job).toMatch(/^COPY \. \.$/m);
+      expect(df, job).toMatch(/bun install --frozen-lockfile --ignore-scripts/);
+      expect(df, job).toMatch(/^ENTRYPOINT \["\/usr\/local\/bin\/job-entrypoint\.sh"\]$/m);
+      expect(df, job).toMatch(/ARG FP_SHA=/);
+      expect(df, job).toMatch(/ARG BUILT_AT=/);
+    }
+  });
+
+  it("gives ONLY the canary a docker client, and the daemon it used to compile", () => {
+    // The socket is the reason for three images rather than one: an image with
+    // no docker client cannot be talked into reaching the host daemon.
+    expect(dockerfiles.canary).toMatch(/download\.docker\.com\/linux\/static/);
+    expect(dockerfiles.translate).not.toMatch(/download\.docker\.com/);
+    expect(dockerfiles["docs-audit"]).not.toMatch(/download\.docker\.com/);
+    // failproofaid is compiled at build time against the same Debian the probe
+    // sandbox runs, instead of once per run in a sibling rust container.
+    expect(dockerfiles.canary).toMatch(/FROM rust:1-bookworm AS daemon/);
+    expect(dockerfiles.canary).toMatch(/CANARY_DAEMON_BIN=\/opt\/failproofaid\/failproofaid/);
+    // And the run must not rebuild what the image already carries.
+    expect(dockerfiles.canary).toMatch(/CANARY_SKIP_BUILD=1/);
+  });
+
+  it("mintlify belongs to translate alone", () => {
+    expect(dockerfiles.translate).toMatch(/mintlify@/);
+    expect(dockerfiles.canary).not.toMatch(/mintlify@/);
+    expect(dockerfiles["docs-audit"]).not.toMatch(/mintlify@/);
+  });
+
+  it("refuses to build if a credential reached the context, and ignores them twice over", () => {
+    // These images are PUBLIC and their context is the repo root — which the
+    // canary writes real credentials into at run time. .dockerignore is the
+    // boundary; the in-Dockerfile assertion is what catches the day a name
+    // changes on the writing side and silently stops matching.
+    for (const f of ["tokens", "canary.env", "secrets.env", ".env"]) {
+      expect(dockerignore, f).toContain(f);
+    }
+    expect(dockerignore).toMatch(/^\.git\/$/m);
+    for (const [job, df] of Object.entries(dockerfiles)) {
+      expect(df, job).toMatch(/REFUSING TO BUILD/);
+    }
+  });
+
+  it("entrypoint runs the baked tree instead of cloning, and never bakes a ref", () => {
+    // A run-time clone was how the box tracked main; it now tracks main by
+    // pulling. Nothing here may fetch — that is the property that makes the
+    // image reproducible.
+    expect(entrypointSh).not.toMatch(/git clone|git fetch|git checkout/);
+    expect(entrypointSh).toMatch(/CLONE="\$\{CANARY_CLONE:-\/opt\/failproofai\}"/);
+    expect(entrypointSh).toMatch(/JOB_SCRIPT="\$CLONE\/integration-suite\/local\/jobs\/\$JOB\.sh"/);
+    expect(entrypointSh).toMatch(/exec bash "\$JOB_SCRIPT"/);
+    for (const j of JOB_IMAGES) expect(existsSync(path.join(LOCAL, `jobs/${j}.sh`))).toBe(true);
+  });
+
+  it("reports how old the baked commit is, and treats an unreadable date as stale", () => {
+    // The failure the old clone-per-run shape could not have: a broken image
+    // build leaves the last good image in place and every report goes green
+    // against week-old code. It has to announce itself.
+    expect(entrypointSh).toMatch(/CANARY_BAKED_SHA/);
+    expect(entrypointSh).toMatch(/CANARY_BAKED_AT/);
+    expect(entrypointSh).toMatch(/CANARY_IMAGE_STALE=1/);
+    expect(entrypointSh).toMatch(/AGE_DAYS" = "\?"/);
+    const report = readFileSync(path.join(SUITE, "report.js"), "utf8");
+    expect(report).toMatch(/CANARY_IMAGE_STALE/);
+  });
+
+  it("serializes runs per job on the host work dir", () => {
+    expect(entrypointSh).toMatch(/flock -n/);
+    expect(entrypointSh).toMatch(/\.lock-\$JOB/);
+  });
+
+  it("entrypoint explains the identical-path work-dir mount when it is missing", () => {
+    // Path parity is the load-bearing trick of the whole design: paths under
+    // the work dir serve as sibling-container -v sources, resolved by the
+    // HOST daemon. The failure message must teach the fix.
+    expect(entrypointSh).toMatch(/-v \\"\\\$HOME\/fp-canary:\\\$HOME\/fp-canary\\"/);
+  });
+
+  it("the cron wrapper picks the image per job, and only the canary gets the socket", () => {
+    expect(runJobSh).toMatch(/ghcr\.io\/failproofai\/failproofai-\$JOB:latest/);
+    expect(runJobSh).toMatch(/IMAGE_VAR="CANARY_IMAGE_/);
+    expect(runJobSh).toMatch(/canary\)\s+SOCK=\(-v \/var\/run\/docker\.sock/);
+    expect(runJobSh).toMatch(/translate\)\s+SOCK=\(\)/);
+    expect(runJobSh).toMatch(/--pull=always/);
+  });
+});
+
+describe("canary job (in-repo, evolves with the harness)", () => {
+  it("hands the decoded tokens to the uid that actually reads them", () => {
+    // inject-tokens.sh runs in a sibling as the sandbox's unprivileged user
+    // (uid 1001). A 0700 dir owned by root reads to it as an EMPTY directory,
+    // and "token dir present but empty" looks downstream like three CLIs that
+    // are simply not logged in. chown, not chmod 755 — the box may have other
+    // users on it.
+    const ci = readFileSync(path.join(SUITE, "ci-entrypoint.sh"), "utf8");
+    expect(ci).toMatch(/chown -R 1001:1001 "\$TOKENS_DIR"/);
+  });
+
+  it("keeps decoded credentials host-visible, because they are a sibling mount", () => {
+    // Two constraints at once, and the first cut satisfied only one: OUT of the
+    // checkout (the images bake it) and ON the host (inject-tokens.sh runs in
+    // its own container, so the daemon resolves the path host-side). A
+    // container-local /tmp mounted empty and three CLIs read as logged out.
+    const ci = readFileSync(path.join(SUITE, "ci-entrypoint.sh"), "utf8");
+    expect(ci).toMatch(/CRED_DIR="\$\{CANARY_CRED_DIR:-\$\{CANARY_WORK:\+\$CANARY_WORK\/run\}\}"/);
+    expect(ci).toMatch(/TOKENS_DIR="\$\{CANARY_TOKENS_DIR:-\$CRED_DIR\/tokens\$SUFFIX\}"/);
+    expect(ci).not.toMatch(/TOKENS_DIR="\$\{CANARY_TOKENS_DIR:-\$REPO/);
+  });
+
+  it("materialises the baked tree where SIBLING containers can reach it", () => {
+    // Everything this job spawns is a sibling: the HOST daemon resolves its -v
+    // sources against the HOST filesystem. The image's checkout lives at
+    // /opt/failproofai, which exists only inside the canary container, so a
+    // probe container would mount an empty directory — found by running the real
+    // image, which died on `bash: /opt/canary/install-clis.sh: No such file`.
+    // The work dir is the one path that means the same thing on both sides.
+    expect(dailySh).toMatch(/if \[ -n "\$\{CANARY_BAKED_SHA:-\}" \]; then/);
+    expect(dailySh).toMatch(/HOST_REPO="\$WORK\/repo"/);
+    expect(dailySh).toMatch(/\.baked-sha/);
+    expect(dailySh).toMatch(/CLONE="\$HOST_REPO"/);
+    // The daemon binary has the same problem and needs the same answer.
+    expect(dailySh).toMatch(/CANARY_DAEMON_BIN="\$HOST_REPO\/\.bin\/failproofaid"/);
+  });
+
+  it("copies once per published image, not once per run", () => {
+    // 849 MB of tree (node_modules is most of it). Keyed by the baked SHA, so a
+    // daily run of an unchanged image skips it entirely.
+    // [\s\S] rather than . with the /s flag — this repo's tsc target predates
+    // dotAll, and vitest does not typecheck, so the flag passed locally and
+    // failed the build.
+    expect(dailySh).toMatch(/cat "\$HOST_REPO\/\.baked-sha" 2>\/dev\/null \|\| echo none[\s\S]*!=/);
+    expect(dailySh).toMatch(/reusing the materialised tree/);
+  });
+
+  it("drives the same front door CI does, one leg per channel", () => {
+    expect(dailySh).toContain("integration-suite/ci-entrypoint.sh");
+    expect(dailySh).toMatch(/\$\{CANARY_LEGS:-stable beta\}/);
+  });
+
+  it("stable leg defaults to the daemon path, beta to in-process", () => {
+    expect(dailySh).toContain("${CANARY_DAEMON_STABLE:-1}");
+    expect(dailySh).toContain("${CANARY_DAEMON_BETA:-0}");
+  });
+
+  it("pins the cargo cache under the work dir (path parity for the sibling build)", () => {
+    // ci-entrypoint's default cargo cache is under $HOME — inside the runner
+    // container that path does not exist on the host, so the rust sibling
+    // container's -v mount would silently create a root-owned host dir and
+    // cache nothing. The only harness default rooted outside $WORK.
+    expect(dailySh).toMatch(/CANARY_CARGO_CACHE="\$\{CANARY_CARGO_CACHE:-\$WORK\/cargo\}"/);
+  });
+
+  it("crash-guard greps the exact success line run.sh prints", () => {
+    // "leg died WITHOUT reporting" is detected by the absence of run.sh's own
+    // posted-to-Slack line — if that wording changes in run.sh, the crash
+    // guard goes blind and every FAIL verdict would double-post a crash note.
+    const m = /grep -q "([^"]+)" "\$leg_log"/.exec(dailySh);
+    expect(m).not.toBeNull();
+    expect(runSh).toContain(m![1]);
+  });
+});
+
+describe("credentials: no example file ships, by design", () => {
+  it("keeps every env-file-shaped file out of the repo", () => {
+    // A file that LOOKS like a credentials file is one `git add -A` away from
+    // being committed by whoever fills it in. The installer prints the variable
+    // list instead, so there is nothing in the tree to fill in by mistake.
+    const stray = readdirSync(LOCAL).filter((f) => /(^|\.)env(\.|$)|secrets/.test(f));
+    expect(stray, `no env-shaped file may ship: ${stray.join(", ")}`).toEqual([]);
+    expect(installSh).not.toMatch(/secrets\.env\.example/);
+  });
+
+  it("prints the required variables instead of downloading a template", () => {
+    // Derived from the same REQUIRED_ lists the checks use, so the printed list
+    // cannot drift out of date the way a checked-in example silently does.
+    expect(installSh).toMatch(/no credentials file given/);
+    expect(installSh).toMatch(/eval "required=\\\$REQUIRED_\$\(vn "\$j"\)"/);
+    expect(installSh).toMatch(/\*_REF\) printf '    %s=origin\/main/);
+    // no download of a credentials template — the usage comment may still
+    // show the curl one-liner that fetches the INSTALLER itself
+    expect(installSh).not.toMatch(/curl[^\n]*-o[^\n]*secrets/);
+  });
+
+  it("tells the person to keep the file out of a checkout", () => {
+    expect(installSh).toMatch(/OUT of any[\s\S]{0,12}checkout/);
+    expect(installSh).toMatch(/chmod 600 "\$WORK\/secrets\.env"/);
+  });
+
+  it("every secret the workflow feeds is still read somewhere on the box", () => {
+    // The box's env file and the GHA Environment must stay interchangeable. A
+    // secret added to the workflow that nothing on the box reads means the box
+    // runs without it and that CLI quietly reports ERROR forever. With no
+    // example file to compare against, the real consumers are the check.
+    const consumers = ["ci-entrypoint.sh", "run.sh", "probe-cli.sh", "install-clis.sh", "inject-tokens.sh"]
+      .map((f) => readFileSync(path.join(SUITE, f), "utf8"))
+      .join("\n");
+    const envNames = [...workflow.matchAll(/^\s+([A-Z0-9_]+):\s+\$\{\{\s*secrets\./gm)].map(
+      (m) => m[1],
+    );
+    expect(envNames.length).toBeGreaterThanOrEqual(10);
+    for (const name of envNames) {
+      expect(consumers, `nothing on the box reads ${name}`).toContain(name);
+    }
+  });
+});
+
+describe("daemon-mode probe path", () => {
+  it("ci-entrypoint builds the daemon in a bookworm container and hands it to run.sh", () => {
+    // rust:1-bookworm ⇔ node:22-bookworm-slim sandbox: same glibc line. A
+    // host build can link a newer glibc and fail to load inside the sandbox.
+    expect(entrypoint).toMatch(/rust:1-bookworm cargo build --release --locked -p failproofaid/);
+    expect(entrypoint).toMatch(/^CANARY_DAEMON=/m);
+    expect(entrypoint).toMatch(/^CANARY_DAEMON_BIN=/m);
+  });
+
+  it("run.sh mounts the binary exactly where probe-cli.sh executes it", () => {
+    const mount = /-v "\$DBIN:(\S+):ro"/.exec(runSh);
+    expect(mount).not.toBeNull();
+    expect(probeSh).toContain(mount![1]);
+  });
+
+  it("probe-cli.sh restarts the daemon per probe (oracle isolation)", () => {
+    // The wire protocol forwards {hookEvent, cli, stdin, cwd} — never env — so
+    // the worker's FAILPROOFAI_HOOK_LOG_FILE is fixed at daemon start. One
+    // daemon across both probes would mean one shared log dir, and probe A's
+    // incidental read-denies (an agent exploring before it touches the marker)
+    // would satisfy probe B's grep: a false PASS.
+    expect(probeSh).toContain('daemon_cycle "$LOGA"');
+    expect(probeSh).toContain('daemon_cycle "$LOGB"');
+  });
+
+  it("sets the fail-closed marker in daemon mode and clears it otherwise", () => {
+    // The HOME volume persists across daily runs: a marker left behind by a
+    // daemon-mode run would make an in-process run fail closed on every hook
+    // event with no daemon anywhere.
+    expect(probeSh).toMatch(/updateConfig\(\{daemon:\{configured:true\}\}\)/);
+    expect(probeSh).toMatch(/updateConfig\(\{daemon:\{configured:false\}\}\)/);
+  });
+
+  it("CANARY_DAEMON_DEAD implies daemon mode in every layer", () => {
+    // The fail-closed leg (daemon-configured, daemon never started — every CLI
+    // must deny; live-verified 2026-08-07 against 10 real CLIs). Each layer
+    // normalizes independently because each can be invoked directly.
+    for (const [name, src] of [
+      ["probe-cli.sh", probeSh],
+      ["run.sh", runSh],
+      ["ci-entrypoint.sh", entrypoint],
+    ] as const) {
+      expect(src, `${name} missing the DEAD→DAEMON normalization`).toMatch(
+        /CANARY_DAEMON_DEAD[^\n]*&& CANARY_DAEMON=1|CANARY_DAEMON_DEAD[^\n]*\]; then CANARY_DAEMON=1/,
+      );
+    }
+  });
+
+  it("the DEAD leg never starts the daemon, needs no binary, and skips the build", () => {
+    expect(probeSh).toMatch(/CANARY_DAEMON_DEAD[^\n]*mkdir -p "\$1"; return 0/);
+    // run.sh: the binary requirement sits inside the not-DEAD guard
+    expect(runSh).toMatch(/CANARY_DAEMON_DEAD[^\n]*!= 1[\s\S]{0,200}CANARY_DAEMON_BIN/);
+    // ci-entrypoint: the cargo build is skipped on the DEAD leg
+    expect(entrypoint).toMatch(/CANARY_DAEMON[^\n]*= 1[^\n]*&&[^\n]*CANARY_DAEMON_DEAD[^\n]*!= 1/);
+  });
+
+  it("the DEAD leg scores the fail-closed deny as PASS on both probes", () => {
+    const scored = probeSh.match(
+      /\[ "\$\{CANARY_DAEMON_DEAD:-0\}" = 1 \] && daemon_failed_closed "\$LOG[AB]\/hooks\.log"; then V[AB]=PASS/g,
+    );
+    expect(scored?.length).toBe(2);
+    // and the detector keys on the synthetic fail-closed policy name
+    expect(probeSh).toMatch(/daemon_failed_closed\(\) \{ grep -q "daemon-unreachable"/);
+  });
+
+  it("DEAD-leg results live in their own state lane", () => {
+    // A PASS on the DEAD leg means "denied while dead". Written into the
+    // enforcement gate it would skip the next REAL probe of the same
+    // (CLI, failproofai) pair as already-green.
+    expect(runSh).toMatch(/STATE="\$STATE\.dead"/);
+  });
+
+  it("the marker is cleared BEFORE wire and set AFTER it (wire fires vendor hooks)", () => {
+    // A marker with no daemon up yet would fail-close the vendor CLI calls
+    // wire() itself makes (openclaw onboard fires plugin hooks), breaking the
+    // wiring before any probe runs. That marker can come from TODAY (set too
+    // early) or YESTERDAY (persistent volume) — so the clear must run in every
+    // mode before wire, and daemon mode re-sets only after wire.
+    const wireCall = probeSh.indexOf("\nwire\n");
+    const markerClear = probeSh.indexOf("m.updateConfig({daemon:{configured:false}})");
+    const markerSet = probeSh.indexOf("m.updateConfig({daemon:{configured:true}})");
+    expect(wireCall).toBeGreaterThan(0);
+    expect(markerClear).toBeGreaterThan(0);
+    expect(markerClear).toBeLessThan(wireCall);
+    expect(markerSet).toBeGreaterThan(wireCall);
+  });
+
+  it("a dead daemon cannot false-PASS either probe", () => {
+    // bin/failproofai.mjs shapes an unreachable-daemon deny through a
+    // synthetic policy (see handler.ts's forceDecision branch). Its oracle
+    // line must NEVER satisfy the probes' deny greps — otherwise a crashed
+    // daemon reads as healthy enforcement, the exact inversion this suite
+    // exists to catch. Both sides are extracted from the real sources so a
+    // rename on either side trips this test.
+    const idMatch = /registerPolicy\(\s*"(failproofai\/[a-z-]+)",\s*"Fail-closed/.exec(handlerTs);
+    expect(idMatch).not.toBeNull();
+    // handler.ts — `result=${decision} policy=${policyName} duration=…`
+    const failClosedLine = `result=deny policy=${idMatch![1]} duration=3ms`;
+
+    const deniedPat = /denied\(\) \{ grep -qE "([^"]+)"/.exec(probeSh);
+    const readDeniedPat = /read_denied\(\) \{ grep -qE "([^"]+)"/.exec(probeSh);
+    expect(deniedPat).not.toBeNull();
+    expect(readDeniedPat).not.toBeNull();
+
+    const deniedRe = new RegExp(deniedPat![1].replace("$1", "canary-bash"));
+    const readDeniedRe = new RegExp(readDeniedPat![1]);
+    // Sanity both ways: the real canary/builtin lines must still match…
+    expect(deniedRe.test("result=deny policy=custom/canary-bash duration=2ms")).toBe(true);
+    expect(
+      readDeniedRe.test("result=deny policy=failproofai/block-read-outside-cwd duration=2ms"),
+    ).toBe(true);
+    // …and the fail-closed line must match neither.
+    expect(deniedRe.test(failClosedLine)).toBe(false);
+    expect(readDeniedRe.test(failClosedLine)).toBe(false);
+  });
+});
+
+describe("one image, several jobs", () => {
+  it("validates the job name before it becomes a path component", () => {
+    // $CANARY_JOB is interpolated into jobs/<job>.sh. Rejected, never
+    // sanitised: a rewritten name silently runs a different job than the cron
+    // line asked for.
+    expect(entrypointSh).toMatch(/case "\$JOB" in\s*\n\s*\*\[!a-z0-9-\]\*/);
+  });
+
+  it("keys the lock, the clone and the log by job", () => {
+    // A SHARED lock is the failure this design exists to avoid: a canary
+    // wedged on a vendor CLI would swallow the night's translation, and the
+    // swallow is a clean `exit 0` that reports nowhere. A shared CLONE is
+    // worse — translate commits and switches branches in its checkout.
+    expect(entrypointSh).toMatch(/exec 9>"\$CANARY_WORK\/\.lock-\$JOB"/);
+    expect(entrypointSh).toMatch(/CANARY_LOG="\$CANARY_WORK\/logs\/\$JOB-\$TS\.log"/);
+    // The clone is no longer per job because there is no clone: each image
+    // carries its own baked tree, so two jobs cannot share a checkout even by
+    // accident. The per-job lock and log still matter for the same reasons.
+    expect(entrypointSh).not.toMatch(/clone-\$JOB/);
+  });
+
+  it("lists the jobs that exist when asked for one that does not", () => {
+    expect(entrypointSh).toMatch(/no such job/);
+    expect(entrypointSh).toMatch(/ls -1 "\$CLONE\/integration-suite\/local\/jobs\//);
+  });
+
+  it("needs no post-checkout cleanup, because there is no checkout", () => {
+    // The entrypoint used to `reset --hard` and `clean -fd` a reused clone,
+    // because last run's untracked output would otherwise be re-committed
+    // forever. Each run now starts from a fresh container over a baked tree,
+    // which is the same guarantee without the footgun (`clean -fdx` there would
+    // have taken node_modules and the symlinked translation cache with it).
+    expect(entrypointSh).not.toMatch(/git -C "\$CLONE" clean/);
+    expect(entrypointSh).not.toMatch(/reset --hard/);
+  });
+
+  it("prunes logs once, centrally, rather than per job", () => {
+    expect(entrypointSh).toMatch(/find "\$CANARY_WORK\/logs" -name '\*\.log' -mtime \+14 -delete/);
+    expect(dailySh).not.toMatch(/-mtime \+14 -delete/);
+    expect(translateSh).not.toMatch(/-mtime \+14 -delete/);
+  });
+});
+
+describe("translate-docs.yml is dispatch-only", () => {
+  it("has no schedule trigger (the nightly run lives on the box)", () => {
+    // Same cost decision as the integration suite. A schedule reappearing
+    // here is a re-spend, so it must be a conversation.
+    expect(translateWorkflow).not.toMatch(/^\s*schedule:/m);
+    expect(translateWorkflow).not.toMatch(/\bcron:/);
+  });
+
+  it("keeps workflow_dispatch as the cloud fallback", () => {
+    expect(translateWorkflow).toMatch(/^\s*workflow_dispatch:/m);
+  });
+});
+
+describe("translate job", () => {
+  it("checks every credential up front, together", () => {
+    // Discovering a missing PAT at the push costs the whole translation pass
+    // that preceded it.
+    for (const v of [
+      "TRANSLATE_LLM_API_KEY",
+      "TRANSLATE_LLM_BASE_URL",
+      "TRANSLATE_GITHUB_TOKEN",
+    ]) {
+      expect(translateSh, `translate.sh must require ${v}`).toContain(v);
+    }
+    expect(translateSh).toMatch(
+      /for v in TRANSLATE_LLM_API_KEY TRANSLATE_LLM_BASE_URL TRANSLATE_GITHUB_TOKEN/,
+    );
+  });
+
+  it("maps the box vars onto the names the translator actually reads", () => {
+    expect(translateSh).toMatch(/export ANTHROPIC_API_KEY="\$TRANSLATE_LLM_API_KEY"/);
+    expect(translateSh).toMatch(/export ANTHROPIC_BASE_URL="\$TRANSLATE_LLM_BASE_URL"/);
+  });
+
+  it("keeps the cache in the work dir, not the checkout", () => {
+    // The checkout is reset --hard and clean -fd'd every run. A cache living
+    // there would be a full 14-language re-translation every night.
+    expect(translateSh).toMatch(
+      /ln -sfn "\$CACHE_HOME\/\.translation-cache\.json"/,
+    );
+    expect(translateSh).toMatch(/CACHE_HOME="\$WORK\/translate"/);
+  });
+
+  it("reproduces CI's peak gateway concurrency, not cli.ts's per-process default", () => {
+    // CI ran max-parallel 4 jobs x MAX_CONCURRENT 4 = 16 in flight. One
+    // process at cli.ts's default of 4 would quietly be 4x slower.
+    expect(translateSh).toMatch(/TRANSLATE_MAX_CONCURRENT:-16/);
+  });
+
+  it("runs both validators, and again after overlaying an open PR branch", () => {
+    // The overlaid tree is neither what was validated before the switch nor
+    // what the PR branch had — and it is what gets committed.
+    expect(translateSh.match(/mintlify validate/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(translateSh.match(/bun run validate:mdx/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("pushes onto an already-open auto-translation PR instead of a second branch", () => {
+    // Two open branches means the second run's cache says "done" for pages
+    // only the first branch carries — the non-convergent deadlock, self-inflicted.
+    expect(translateSh).toContain('PR_TITLE="[auto] update translations"');
+    expect(translateSh).toMatch(/x\.title\s*===\s*process\.argv\[1\]/);
+    expect(translateSh).toMatch(/git checkout -f -B "\$BRANCH" "origin\/\$BRANCH"/);
+  });
+
+  it("keeps the PAT out of the remote URL", () => {
+    // git echoes the remote back on a push error, and the Slack crash-note
+    // carries the log tail — a URL-embedded token would land in both.
+    expect(translateSh).toMatch(/credential\.helper/);
+    expect(translateSh).not.toMatch(/https:\/\/[^\s"]*\$TRANSLATE_GITHUB_TOKEN@/);
+  });
+
+  it("stays quiet on success but posts on failure", () => {
+    // This used to assert the job posted NOTHING, on the reasoning that its
+    // output is the pull request. That held for the two SUCCESS shapes and
+    // failed for the third: a run that dies also leaves no PR, so failing and
+    // idling were the same signal. It failed for six days in August 2026 while
+    // 28 pages sat missing from 14 locales, and the weekly docs audit — not
+    // this job — is what noticed.
+    //
+    // So the invariant is no longer "silent"; it is "silent unless something
+    // went wrong". Only die() may post.
+    expect(translateSh).toMatch(/slack_note/);
+    const die = translateSh.slice(translateSh.indexOf("die() {"));
+    expect(die.slice(0, 400)).toMatch(/slack_note/);
+    // Nothing on the success paths: every `stamp ok` site stays post-free.
+    for (const m of translateSh.matchAll(/stamp ok[^\n]*\n/g)) {
+      expect(m[0]).not.toMatch(/slack_note/);
+    }
+  });
+
+  it("anchors its commit on the FULL baked sha, with a mixed reset", () => {
+    // Two bugs found by running the real image, either of which would have
+    // opened a destructive PR at 02:00:
+    //
+    //   `git fetch origin <short sha>` is rejected outright by github
+    //   ("couldn't find remote ref"), so the anchor has to be the full object id.
+    //
+    //   `git init` leaves an EMPTY index and `reset --soft` does not touch the
+    //   index — so all ~1500 tracked files read as staged deletions and the
+    //   `git add -A` below would commit the repository being emptied. A MIXED
+    //   reset sets the index to the commit and leaves the baked tree alone.
+    expect(translateSh).toMatch(/ANCHOR="\$\{CANARY_BAKED_SHA_FULL:-\$FP_SHA\}"/);
+    expect(translateSh).toMatch(/git fetch -q --depth 1 origin "\$ANCHOR"/);
+    expect(translateSh).toMatch(/git reset -q FETCH_HEAD/);
+    expect(translateSh).not.toMatch(/git reset --soft/);
+  });
+
+  it("refuses to publish when the baked tree differs from the commit it claims", () => {
+    // The baked tree IS that commit, so any difference is the build context
+    // having dropped a tracked file — which `git add -A` turns into a deletion
+    // in a PR that is meant to only touch translations.
+    expect(translateSh).toMatch(/drift="\$\(git status --short \| wc -l/);
+    expect(translateSh).toMatch(/\[ "\$drift" = 0 \] \|\| die/);
+  });
+
+  it("publishes what succeeded instead of discarding it on one bad page", () => {
+    // 2026-08-18: ONE page overran the output limit, cli.ts exited 1, this job
+    // died before its push, and 782 completed translations (2.7M tokens) went
+    // in the bin. --allow-partial makes the run publish and REPORT instead.
+    expect(translateSh).toMatch(/--allow-partial/);
+    // PIPESTATUS, not $? — `bun … | tee` would otherwise report tee's status
+    // and a real failure would sail through as success.
+    expect(translateSh).toMatch(/PIPESTATUS\[0\]/);
+  });
+
+  it("carries a partial run into the PR body and Slack, never silently", () => {
+    // The danger of publishing partial output is that the PR LOOKS complete.
+    // The failed pages have to travel with it.
+    expect(translateSh).toMatch(/grep -q "\^PARTIAL RUN"/);
+    expect(translateSh).toMatch(/This run was PARTIAL/);
+    expect(translateSh).toMatch(/published a PARTIAL run/);
+    // and the stamp says partial, so the weekly audit does not read it as ok
+    expect(translateSh).toMatch(/stamp partial/);
+  });
+
+  it("stamps every exit so 'never ran' is detectable from outside", () => {
+    // The one failure no error handler can report is the job not starting, so
+    // the signal has to be a file whose AGE another job can read.
+    expect(translateSh).toMatch(/stamp\(\) \{/);
+    expect(translateSh).toMatch(/last-run\.json/);
+    expect(translateSh).toMatch(/stamp failed/);
+    expect(translateSh.match(/stamp ok/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("never claims success for a step it did not reach", () => {
+    // Every failure path goes through die(), which names the step and posts.
+    expect(translateSh).toMatch(/STEP="\$1"/);
+    expect(translateSh.match(/\|\| die /g)?.length).toBeGreaterThanOrEqual(10);
+  });
+});
+
+describe("installer schedules every job it validated", () => {
+  it("gives each job its own cron marker", () => {
+    // One shared marker means installing one job strips the other's line.
+    expect(installSh).toMatch(/CRON_MARKER_BASE="# failproofai-canary"/);
+    expect(installSh).toMatch(/marker="\$CRON_MARKER_BASE-\$j"/);
+    expect(installSh).toMatch(/grep -vF "\$marker"/);
+  });
+
+  it("upgrades a pre-marker box instead of stacking a second schedule on it", () => {
+    // The marker is younger than some installs: a box set up before it existed
+    // carries a long-form inline `docker run … -e CANARY_JOB=<job> …` line with
+    // no marker, and matching only the marker leaves it in place — six entries,
+    // every job scheduled twice, one on the old image and one on the new. The
+    // flock keeps that from doing damage; it just makes which image runs a coin
+    // toss. Verified against the real box's crontab, which is exactly that shape.
+    expect(installSh).toMatch(/grep -vF "\$marker" \| grep -vF "CANARY_JOB=\$j"/);
+  });
+
+  it("passes the job through to the container", () => {
+    // The docker invocation moved into run.sh so a crontab entry could be one
+    // short line; the installer now passes the job name to that.
+    expect(installSh).toMatch(/printf '%s\/run\.sh %s' "\$WORK" "\$1"/);
+    expect(readFileSync(path.join(LOCAL, "run-job.sh"), "utf8")).toMatch(
+      /-e CANARY_JOB="\$JOB"/,
+    );
+  });
+
+  it("checks credentials per job, for the jobs it is about to schedule", () => {
+    // Installing only the canary must not demand a translation PAT.
+    expect(installSh).toMatch(/REQUIRED_canary="/);
+    expect(installSh).toMatch(/REQUIRED_translate="/);
+    expect(installSh).toMatch(/eval "required=\\\$REQUIRED_\$\(vn "\$j"\)"/);
+  });
+
+  it("requires the webhook for the jobs whose only output IS the report", () => {
+    // canary and docs-audit report to Slack and nowhere else, so a missing
+    // webhook makes them look like coverage while producing none. translate is
+    // the exception: it opens a pull request, which says everything a chat
+    // message would.
+    for (const j of ["canary", "docs_audit"]) {
+      const req = new RegExp(`REQUIRED_${j}="([^"]+)"`).exec(installSh)![1];
+      expect(req, `${j} must require the webhook`).toContain("CANARY_SLACK_WEBHOOK");
+    }
+    const translateReq = /REQUIRED_translate="([^"]+)"/.exec(installSh)![1];
+    expect(translateReq).toContain("TRANSLATE_GITHUB_TOKEN");
+    expect(translateReq).not.toContain("CANARY_SLACK_WEBHOOK");
+  });
+
+  it("names the timezone cron will actually fire in", () => {
+    // "02:00" read as UTC on an IST box is 07:30, and the person reading the
+    // installer's output is the one who would be surprised.
+    expect(installSh).toMatch(/TZ_NAME=/);
+    expect(installSh).toMatch(/did "\$j — \$\(describe_cron "\$at"\) \$TZ_NAME"/);
+  });
+
+  it("offers every box variable the jobs require", () => {
+    const required = ["canary", "translate", "docs_audit"].flatMap(
+      (j) => new RegExp(`REQUIRED_${j}="([^"]+)"`).exec(installSh)![1].split(" "),
+    );
+    for (const v of required) {
+      expect(installSh, `install.sh never mentions ${v}`).toContain(v);
+    }
+  });
+});
+
+describe("translate job failures are never silent", () => {
+  it("names the step it died at, in the run log", () => {
+    // This job posts nowhere, so the log and the exit code ARE the report —
+    // which makes the printing here load-bearing rather than a convenience.
+    // An earlier cut posted and did not print, and a run with no webhook set
+    // failed to a completely empty console.
+    const dieBody = translateSh.slice(
+      translateSh.indexOf("die() {"),
+      translateSh.indexOf("step() {"),
+    );
+    expect(dieBody).toMatch(/echo "✗ \$STEP: \$1" >&2/);
+    expect(dieBody).toMatch(/exit 1/);
+  });
+});
+
+describe("docs-audit job", () => {
+  it("never grows a gateway key or write access to the repo", () => {
+    // This job READS the tree and git history. It may hold an issues-only token
+    // for its tracking issue, and nothing heavier: no gateway key (it calls no
+    // model) and no Contents/Pull-requests scope (it changes no file). If that
+    // ever changes it is a different job with a different risk profile, and
+    // this test is where it gets noticed.
+    const required = /REQUIRED_docs_audit="([^"]+)"/.exec(installSh)![1].split(" ").sort();
+    expect(required).toEqual([
+      "CANARY_SLACK_WEBHOOK",
+      "DOCS_AUDIT_GITHUB_TOKEN",
+      "DOCS_AUDIT_REF",
+    ]);
+    expect(docsAuditSh).not.toMatch(/TRANSLATE_GITHUB_TOKEN|LLM_API_KEY|ANTHROPIC_/);
+    expect(docsAuditSh).not.toMatch(/git (push|commit|checkout -b)/);
+  });
+
+  it("defaults to weekly, which needs a five-field cron expression", () => {
+    expect(installSh).toMatch(/AT_docs_audit="0 4 \* \* 1"/);
+  });
+
+  it("reads the same translation cache the nightly job writes", () => {
+    // Without the link every page reads as never-translated every week — a
+    // 672-line finding that is an artefact of where the file lives.
+    expect(docsAuditSh).toMatch(/CACHE_HOME="\$WORK\/translate"/);
+    expect(docsAuditSh).toMatch(/ln -sfn "\$CACHE_HOME\/\.translation-cache\.json"/);
+  });
+
+  it("delegates the analysis to the unit-tested script", () => {
+    // The shell is box wiring; the judgement lives in TypeScript where it can
+    // be tested without a repo, a docs tree or a clock.
+    expect(docsAuditSh).toMatch(/bun run docs:audit/);
+    expect(existsSync(path.join(ROOT, "scripts/docs-audit.ts"))).toBe(true);
+  });
+
+  it("posts what it found, and says so when it cannot post", () => {
+    // The posted text is the report, optionally followed by the nightly
+    // translation's health line — so this matches the call, not the exact
+    // argument, which now carries that suffix.
+    expect(docsAuditSh).toMatch(/slack_note "\$REPORT/);
+    expect(docsAuditSh).toMatch(/no webhook set/);
+  });
+
+  it("reports whether the nightly translation is still running", () => {
+    // translate is quiet on success, so nothing else on the box can tell
+    // "idle" from "not scheduled". This job already runs weekly and already
+    // reports on translations, so the staleness check belongs here.
+    expect(docsAuditSh).toMatch(/last-run\.json/);
+    expect(docsAuditSh).toMatch(/TRANSLATE_HEALTH/);
+  });
+});
+
+describe("per-job variable lookup survives a dashed job name", () => {
+  it("converts the name once, in one place", () => {
+    // `docs-audit` is a valid path component and an invalid shell variable
+    // name. Every per-job lookup goes through vn() rather than each site
+    // remembering — AT_docs-audit would expand to nothing and schedule the
+    // job at whatever `normalize_cron ""` did next.
+    expect(installSh).toMatch(/vn\(\) \{ printf '%s' "\$\{1\/\/-\/_\}"; \}/);
+    expect(installSh).toMatch(/eval "required=\\\$REQUIRED_\$\(vn "\$j"\)"/);
+    expect(installSh).toMatch(/eval "at=\\\$AT_\$\(vn "\$j"\)"/);
+  });
+
+  it("derives the ref var the same way the entrypoint does", () => {
+    // entrypoint: tr 'a-z-' 'A-Z_' turns docs-audit into DOCS_AUDIT_REF, which
+    // is the name the env template must carry.
+    expect(entrypointSh).toMatch(/tr 'a-z-' 'A-Z_'/);
+    expect(installSh).toContain("DOCS_AUDIT_REF");
+  });
+});
+
+describe("the GitHub API host is overridable", () => {
+  it("defaults to api.github.com and can be pointed elsewhere", () => {
+    // GHES needs this, and it is what let the publish path be proven
+    // end-to-end against a stand-in API without opening real pull requests.
+    // A hardcoded host would make that verification impossible, which is how
+    // a publish path ends up shipped never having been run.
+    expect(translateSh).toMatch(
+      /\$\{TRANSLATE_API_BASE:-https:\/\/api\.github\.com\}\/repos\/\$REPO\$path/,
+    );
+  });
+});
+
+describe("an open PR whose branch is gone", () => {
+  it("tells a missing branch apart from an unreachable remote", () => {
+    // Found by running the job, not by reading it. Dying on a missing branch
+    // dies again every night, because the branch never comes back. But falling
+    // through to a NEW branch on an unreachable remote would open a second PR
+    // on a transient network error — and two open auto-translation PRs is what
+    // reusing one exists to prevent, since the next run picks one and the pages
+    // only the other carries read as cached-but-absent forever.
+    const block = translateSh.slice(
+      translateSh.indexOf('if [ -n "$EXISTING" ]'),
+      translateSh.indexOf('if [ -n "$PR_NUMBER" ]'),
+    );
+    expect(block).toMatch(/git ls-remote --heads origin "\$BRANCH"/);
+    // unreachable -> die; genuinely absent -> fresh branch
+    expect(block).toMatch(/\[ "\$ls_rc" -ne 0 \][\s\S]*?die /);
+    expect(block).toMatch(/elif \[ -z "\$remote_refs" \][\s\S]*?PR_NUMBER=""/);
+  });
+
+  it("creates the fresh branch in exactly one place", () => {
+    // The recovery path and the no-PR path must not BOTH run `checkout -b`, or
+    // the second fails on a branch that already exists.
+    expect(translateSh.match(/git checkout -b "\$BRANCH"/g)).toHaveLength(1);
+  });
+
+  it("says so on stderr rather than silently opening a second PR", () => {
+    expect(translateSh).toMatch(/no longer exists —/);
+    expect(translateSh).toMatch(/close the stale one at \$REPO\/pull\/\$PR_NUMBER/);
+  });
+});
+
+describe("a job's ref must still exist on the remote", () => {
+  it("asks the remote rather than matching one known-stale branch name", () => {
+    // Checking the NAME against `origin/failproofaid` only ever caught that one
+    // branch. A merged-and-deleted feature branch sailed through — which is
+    // exactly what was sitting in a real secrets.env: CANARY_REF pointed at
+    // origin/feat/canary-local-runner, so the box would have tested a frozen
+    // tree forever and never said so.
+    expect(installSh).toMatch(/git ls-remote --heads "\$GIT_URL" "\$branch"/);
+    expect(installSh).toMatch(/does not exist on the remote/);
+    expect(installSh).not.toMatch(/origin\/failproofaid\)/);
+  });
+
+  it("warns, without refusing, when a ref is not main", () => {
+    // Legitimate for a one-off; rarely right for a cron line.
+    expect(installSh).toMatch(/not origin\/main — deliberate for a one-off/);
+  });
+});
+
+describe("the missing-credentials message", () => {
+  it("explains the webhook only when the webhook is what is missing", () => {
+    // translate deliberately needs no webhook — it reports by opening a pull
+    // request. Printing the webhook rationale under a list that does not
+    // contain it reads as though the job wants one it does not.
+    expect(installSh).toMatch(/case " \$missing " in \*" CANARY_SLACK_WEBHOOK "\*\)/);
+    expect(installSh).toMatch(/die "the \$j job needs these[^"]*\$missing\$why/);
+  });
+});
+
+describe("probe B tells a route-around apart from a silent-allow", () => {
+  const policies = readFileSync(path.join(SUITE, "canary-policies.mjs"), "utf8");
+
+  it("only fires the shell detector inside the READ probe", () => {
+    // probe-cli.sh points FAILPROOFAI_HOOK_LOG_FILE at log-bash / log-read per
+    // probe. Firing during probe A would deny `touch CANARY_PROBE_ran` under
+    // the wrong policy name, keeping canary-bash out of the hook log and
+    // turning probe A inconclusive while looking like a fix.
+    expect(policies).toMatch(/endsWith\("log-read"\)/);
+    expect(policies).toMatch(/if \(!inReadProbe\(\)\) return allow\(\);/);
+  });
+
+  it("leaves navigation alone so CLIs that locate before reading still pass", () => {
+    // Denying `ls`/`pwd` would push currently-green CLIs into INCONCLUSIVE.
+    expect(policies).toMatch(/READ_UTIL\.test\(cmd\)/);
+    const readUtil = /const READ_UTIL = (\/.*\/);/.exec(policies)![1];
+    const re = new RegExp(readUtil.slice(1, readUtil.lastIndexOf("/")));
+    expect(re.test("ls -la")).toBe(false);
+    expect(re.test("pwd && ls -la")).toBe(false);
+    expect(re.test("find . -type f -exec cat {} +")).toBe(true);
+    expect(re.test("grep -r . .")).toBe(true);
+  });
+
+  it("keeps the shell deny out of read_denied, so it can never score a PASS", () => {
+    // The trailing space is the whole mechanism: without it `canary-read` also
+    // matches the `canary-read-shell` line, and probe B goes green on a run
+    // where the READ tool was never exercised.
+    expect(probeSh).toMatch(
+      /read_denied\(\) \{ grep -qE "result=deny policy=\(failproofai\/\|custom\/\)\?\(canary-read\|block-read-outside-cwd\) "/,
+    );
+    expect(probeSh).toMatch(/shell_route_attempted\(\) \{ grep -q "result=deny policy=custom\/canary-read-shell "/);
+  });
+
+  it("downgrades a leak to INCONCLUSIVE only when a route-around was being denied", () => {
+    // Either route the probe does not target counts: the shell
+    // (canary-read-shell) or any other tool (canary-guard). A leak with NEITHER
+    // stays FAIL — that is what a CLI ignoring our deny looks like (copilot
+    // 1.0.70), and blurring the two would blind this suite to the silent-allow
+    // it exists to catch.
+    expect(probeSh).toMatch(
+      /if shell_route_attempted "\$LOGB\/hooks\.log" \|\| route_around "\$LOGB\/hooks\.log"\n\s*then VB=INCONCLUSIVE; else VB=FAIL; fi/,
+    );
+    // And drift keeps its own verdict ahead of that branch: canary-guard denies
+    // for two opposite reasons under one name, so the widened exception must
+    // not be able to reach a NORMALIZATION-DRIFT-SUSPECT deny.
+    expect(probeSh).toMatch(/if drift_suspected "\$LOGB\/hooks\.log"; then VB=FAIL/);
+  });
+});
+
+describe("docs-audit tracking issue", () => {
+  it("keeps an ISSUE, not a PR — and says why", () => {
+    // A report is not a change: a weekly PR would sit open forever or auto-merge
+    // a file nobody reads. And a FIXING PR has almost nothing safe to put in it,
+    // since every finding needs a judgement this job cannot make.
+    expect(docsAuditSh).toMatch(/ISSUE_TITLE="\[auto\] docs audit"/);
+    expect(docsAuditSh).toMatch(/api POST \/issues/);
+    expect(docsAuditSh).not.toMatch(/\/pulls/);
+    expect(docsAuditSh).not.toMatch(/git (push|commit|checkout)/);
+  });
+
+  it("filters pull requests out of the /issues listing", () => {
+    // Every PR is an issue to that endpoint. Without the filter, an open PR
+    // sharing the title would be updated instead of the tracking issue.
+    expect(docsAuditSh).toMatch(/!x\.pull_request/);
+  });
+
+  it("closes the issue on a clean week and opens one only when there is work", () => {
+    // An open issue must always mean "there is something to do", never "this
+    // ran once, months ago".
+    expect(docsAuditSh).toMatch(/api PATCH "\/issues\/\$EXISTING" '\{"state":"closed"\}'/);
+    expect(docsAuditSh).toMatch(/if \[ "\$COUNT" -gt 0 \]/);
+  });
+
+  it("still runs, and still reports to Slack, with no token", () => {
+    // The issue is a SECOND channel, not a replacement. A box that never got a
+    // token must degrade to what it did before, not fail.
+    expect(docsAuditSh).toMatch(/if \[ -z "\$\{DOCS_AUDIT_GITHUB_TOKEN:-\}" \]/);
+    const gate = docsAuditSh.slice(docsAuditSh.indexOf('if [ -z "${DOCS_AUDIT_GITHUB_TOKEN'));
+    expect(gate.slice(0, 260)).toMatch(/exit 0/);
+    // indexOf returns -1 for a missing marker, and -1 < any index — so without
+    // these two guards the ordering assertion would PASS for the wrong reason
+    // the day someone deletes the Slack post.
+    const slackAt = docsAuditSh.indexOf('slack_note "$REPORT');
+    const tokenAt = docsAuditSh.indexOf("DOCS_AUDIT_GITHUB_TOKEN:-");
+    expect(slackAt).toBeGreaterThan(-1);
+    expect(tokenAt).toBeGreaterThan(-1);
+    expect(slackAt).toBeLessThan(tokenAt);
+  });
+
+  it("asks for an issues-only token, never Contents or Pull requests", () => {
+    // The audit never changes a file, so a stronger token would be scope it
+    // cannot justify holding on someone's machine.
+    expect(installSh).toContain("DOCS_AUDIT_GITHUB_TOKEN");
+    expect(installSh).toMatch(/docs-audit needs Issues/);
+    const required = /REQUIRED_docs_audit="([^"]+)"/.exec(installSh)![1].split(" ");
+    expect(required).toContain("DOCS_AUDIT_GITHUB_TOKEN");
+    expect(required).not.toContain("TRANSLATE_GITHUB_TOKEN");
+  });
+});
+
+describe("the installer pulls rather than builds", () => {
+  it("defaults to the published image", () => {
+    // Nothing is built on the box. That is what lets an operator set it up with
+    // Docker and a credentials file alone — no clone, no build, no second visit.
+    expect(installSh).toMatch(/IMAGE_PREFIX="\$\{CANARY_IMAGE_PREFIX:-ghcr\.io\/failproofai\/failproofai-\}"/);
+    expect(installSh).toMatch(/image_for\(\) \{/);
+    expect(installSh).not.toMatch(/GIT_URL#\$BUILD_REF/);
+  });
+
+  it("pulls at install time, so a bad tag is caught in front of a person", () => {
+    // Discovering a private package or a typo'd tag at 02:00 means a missed run
+    // nobody sees — the failure class this installer exists to move earlier.
+    expect(installSh).toMatch(/docker pull -q "\$img"/);
+    expect(installSh).toMatch(/could not pull \$img/);
+    expect(installSh).toMatch(/docker login ghcr\.io/);
+  });
+
+  it("keeps a local build for trying an image before it is published", () => {
+    // Everything is baked now, so this is the only way to try any change to a
+    // job before it reaches GHCR. Its context is the REPO ROOT — the operator's
+    // working tree — which is precisely why .dockerignore and the Dockerfiles'
+    // own credential assertion have to hold on this path too.
+    expect(installSh).toMatch(/--build-local\)\s+BUILD_LOCAL=1/);
+    expect(installSh).toMatch(/docker build -t "\$img" -f "\$HERE\/Dockerfile\.\$j"/);
+    expect(installSh).toMatch(/--build-arg "FP_SHA=/);
+  });
+
+  it("schedules every job by default", () => {
+    // One command, three cron lines. --jobs narrows it; nothing widens it.
+    expect(installSh).toMatch(/ALL_JOBS="canary translate docs-audit"/);
+    expect(installSh).toMatch(/JOBS="\$ALL_JOBS"/);
+  });
+});
+
+describe("published images, and the socket only where it is used", () => {
+  const publishWf = readFileSync(
+    path.join(ROOT, ".github/workflows/build-canary-images.yml"),
+    "utf8",
+  );
+
+  it("publishes one image per job, with a stable and a pinned tag", () => {
+    for (const image of ["failproofai-canary", "failproofai-translate", "failproofai-docs-audit"]) {
+      expect(publishWf, image).toContain(image);
+    }
+    expect(publishWf).toMatch(/\$\{IMAGE\}:latest/);
+    expect(publishWf).toMatch(/\$\{IMAGE\}:sha-\$\{short_sha\}/);
+    expect(publishWf).toMatch(/packages: write/);
+  });
+
+  it("rebuilds on EVERY push to main, with no path filter", () => {
+    // The inverse of the old rule, and for the same reason it existed. Job
+    // scripts used to reach the box through a run-time clone, so only the baked
+    // layer needed a rebuild. The tree is baked now: any commit changes what
+    // these images should contain, and a path filter would leave the box
+    // running last week's code with nothing saying so.
+    const trigger = /on:\n([\s\S]*?)\npermissions:/.exec(publishWf)![1];
+    expect(trigger).toMatch(/branches: \[main\]/);
+    expect(trigger).not.toMatch(/paths:/);
+  });
+
+  it("passes the commit and the build time into every image", () => {
+    expect(publishWf).toMatch(/FP_SHA=\$\{\{ steps\.meta\.outputs\.sha \}\}/);
+    expect(publishWf).toMatch(/BUILT_AT=\$\{\{ steps\.meta\.outputs\.built_at \}\}/);
+  });
+
+  it("builds from the repo root, which is why .dockerignore exists", () => {
+    expect(publishWf).toMatch(/context: \./);
+    expect(publishWf).toMatch(/file: integration-suite\/local\/Dockerfile\.\$\{\{ matrix\.job \}\}/);
+  });
+
+  it("lets one image fail without taking the other two down", () => {
+    // A box with a fresh canary and a stale translate beats a box where one
+    // broken Dockerfile stopped all three from publishing.
+    expect(publishWf).toMatch(/fail-fast: false/);
+  });
+
+  it("makes each package public, so no box needs a docker login", () => {
+    // A private package turns the one-line cron into a login plus a credential
+    // that expires and silently breaks the job when it does.
+    expect(publishWf).toMatch(/visibility=public/);
+    expect(publishWf).toMatch(/continue-on-error: true/);
+  });
+
+  it("re-pulls on every run and bounds every job", () => {
+    expect(runJobSh).toMatch(/--pull=always/);
+    expect(runJobSh).toMatch(/exec timeout "\$TMO" docker run/);
+  });
+
+  it("requires the socket only where it is actually used", () => {
+    // The entrypoint needs it solely to RECOVER the work dir, so it is required
+    // only when CANARY_WORK was not passed. The canary asserts its own need,
+    // up front, rather than failing an hour in at the first sibling container.
+    expect(entrypointSh).toMatch(/if \[ -z "\$\{CANARY_WORK:-\}" \]; then\n\s*\[ -S "\$SOCK" \]/);
+    expect(dailySh).toMatch(/\[ -S \/var\/run\/docker\.sock \] \|\|/);
+    expect(dailySh).toMatch(/the canary drives the host's docker/);
+    expect(translateSh).not.toMatch(/docker\.sock/);
+    expect(docsAuditSh).not.toMatch(/docker\.sock/);
+  });
+});
+
+describe("GitHub lookups fail closed", () => {
+  it("neither job can read a failed lookup as 'nothing is open'", () => {
+    // curl piped straight into a parser that swallows its own errors makes a
+    // 401, a 5xx and a timeout indistinguishable from an empty list — and the
+    // answer to an empty list is to CREATE one. That is a duplicate PR whose
+    // generated files split against a cache that marks them done, and a
+    // duplicate issue filed every week until someone notices the pile.
+    for (const [name, sh] of [["translate", translateSh], ["docs-audit", docsAuditSh]] as const) {
+      expect(sh, `${name}: api() must capture the HTTP status`).toMatch(/-w '\\n%\{http_code\}'/);
+      expect(sh, `${name}: api() must reject non-2xx`).toMatch(
+        /case "\$status" in[\s\S]{0,40}2\?\?\) return 0 ;;[\s\S]{0,80}return 1 ;;/,
+      );
+      // the lookup is two statements, so it can fail — never one pipeline
+      expect(sh, `${name}: the lookup must be able to fail`).toMatch(/\|\| die "could not list open/);
+    }
+  });
+
+  it("reports the HTTP status on STDERR, not through a variable", () => {
+    // api() is always called inside $( ), so a variable set there dies with the
+    // subshell and the status never reaches the message. stderr reaches the run
+    // log, which is where whoever is reading the failure already is. An earlier
+    // cut of this fix used a variable and silently printed nothing.
+    for (const [name, sh] of [["translate", translateSh], ["docs-audit", docsAuditSh]] as const) {
+      expect(sh, `${name}: status must go to stderr`).toMatch(
+        /echo "  api \$method \$path → HTTP \$status" >&2/,
+      );
+      expect(sh, `${name}: no subshell-scoped status variable`).not.toMatch(/API_STATUS/);
+    }
+  });
+});
+
+describe("the cron wrapper", () => {
+  const runJobSh = readFileSync(path.join(LOCAL, "run-job.sh"), "utf8");
+
+  it("exists so a crontab entry can be short", () => {
+    // A crontab entry must be a SINGLE line — the format has no continuation —
+    // so the docker invocation cannot be wrapped. Inline, that was a ~350-char
+    // line per job: unreadable in a crontab, and mangled by every chat client
+    // it was pasted through on the way to whoever sets the box up.
+    expect(installSh).toMatch(/printf '%s\/run\.sh %s' "\$WORK" "\$1"/);
+    expect(installSh).toMatch(/cp "\$WRAPPER_SRC" "\$WORK\/run\.sh"/);
+  });
+
+  it("owns its own log, so a missing logs/ cannot swallow the job", () => {
+    // cron evaluates a `>>` redirect BEFORE the command runs, so a missing
+    // directory meant the job silently never started — and the container could
+    // not create the directory its own redirect needed. mkdir then redirect,
+    // in that order, closes it.
+    const mk = runJobSh.indexOf('mkdir -p "$W/logs"');
+    const rd = runJobSh.indexOf('exec >> "$W/logs/cron-$JOB.log"');
+    expect(mk).toBeGreaterThan(-1);
+    expect(rd).toBeGreaterThan(-1);
+    expect(mk).toBeLessThan(rd);
+    // and the cron line itself must carry no redirect any more
+    expect(installSh).not.toMatch(/LINE=.*cron-\$j\.log/);
+  });
+
+  it("hands the docker socket to the canary alone", () => {
+    expect(runJobSh).toMatch(/canary\)\s+SOCK=\(-v \/var\/run\/docker\.sock/);
+    expect(runJobSh).toMatch(/translate\)\s+SOCK=\(\);/);
+    expect(runJobSh).toMatch(/docs-audit\)\s+SOCK=\(\);/);
+  });
+
+  it("refuses an unknown job and a missing credentials file", () => {
+    expect(runJobSh).toMatch(/usage: \$0 canary\|translate\|docs-audit/);
+    expect(runJobSh).toMatch(/\[ -f "\$W\/secrets\.env" \] \|\|/);
+  });
+});

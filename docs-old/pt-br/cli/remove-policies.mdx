@@ -1,0 +1,43 @@
+---
+title: Desinstalar políticas
+description: "Remover entradas de hook das configurações do Claude Code"
+---
+
+```bash
+failproofai policies --uninstall [policy-names...] [options]
+```
+
+Remove entradas de hook do failproofai do `settings.json` do Claude Code.
+
+Aliases: `failproofai p -u`
+
+## Opções
+
+| Flag | Descrição |
+|------|-----------|
+| `--scope user` | Remover das configurações globais (padrão) |
+| `--scope project` | Remover das configurações do projeto |
+| `--scope local` | Remover das configurações locais |
+| `--scope all` | Remover de todos os escopos de uma vez |
+| `--custom` / `-c` | Limpar o `customPoliciesPath` da configuração |
+
+## Comportamento
+
+- **Sem nomes de política** - remove todas as entradas de hook do failproofai do arquivo de configurações
+- **Nomes específicos** - desativa essas políticas, mas mantém os hooks instalados
+
+## Exemplos
+
+```bash
+# Remover todos os hooks globalmente
+failproofai policies --uninstall
+
+# Desativar uma política específica (mantém os hooks instalados)
+failproofai policies --uninstall block-sudo
+
+# Remover hooks de todos os escopos
+failproofai policies --uninstall --scope all
+
+# Limpar o caminho de políticas customizadas
+failproofai policies --uninstall --custom
+```

@@ -1,0 +1,353 @@
+name: Translate Docs
+
+on:
+  # ON-DEMAND FALLBACK. The NIGHTLY translation moved off Actions to the local
+  # box for cost — runner minutes were its entire expense, and the LLM spend is
+  # identical wherever it runs. integration-suite/local/jobs/translate.sh is the
+  # job that replaced the schedule that used to live here; the box runs it at
+  # 02:00 local, and integration-suite/local/install.sh sets it up.
+  #
+  # This workflow stays dispatch-only: the cloud escape hatch for when the box
+  # is down, or when a clean cloud reproduction is wanted. Note that its
+  # Actions-cache state is SEPARATE from the box's cache file, so a dispatch
+  # may re-translate pages the box already has (costing a full pass, not a
+  # wrong result).
+  #
+  # History, since it explains the shape below: auto-translation once ran on
+  # every push to main that touched a translatable source, fanning the full
+  # 14-language matrix out per doc commit. Batching to one daily run coalesced
+  # a day's English-source edits, and the content-hash cache
+  # (scripts/translate-docs/.translation-cache.json) limits token spend to the
+  # documents whose source actually changed.
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Ignore cache and re-translate everything"
+        type: boolean
+        default: false
+      languages:
+        description: "Comma-separated language codes (leave empty for all)"
+        type: string
+        default: ""
+
+concurrency:
+  group: translate-docs
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      languages: ${{ steps.langs.outputs.languages }}
+    steps:
+      - id: langs
+        run: |
+          if [ -n "${{ inputs.languages }}" ]; then
+            echo "languages=$(echo '${{ inputs.languages }}' | jq -Rc 'split(",") | map(gsub("\\s"; ""))')" >> "$GITHUB_OUTPUT"
+          else
+            echo 'languages=["zh","ja","ko","es","pt-br","de","fr","ru","hi","tr","vi","it","ar","he"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  translate:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Cap matrix fan-out so the LiteLLM proxy at ANTHROPIC_BASE_URL
+      # never sees the full 14-way burst. With max-parallel 4 jobs x
+      # MAX_CONCURRENT=4 (the cli.ts default; the env block below does not set
+      # TRANSLATE_MAX_CONCURRENT) that is 16 simultaneous requests. A
+      # generation-time validation retry (TRANSLATE_MAX_ATTEMPTS) re-translates
+      # inside the worker's existing slot, so it lengthens that slot's
+      # wall-clock rather than adding a concurrent request — peak concurrency
+      # stays 16 no matter how many attempts a page needs.
+      max-parallel: 4
+      matrix:
+        lang: ${{ fromJson(needs.prepare.outputs.languages) }}
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+      FAILPROOFAI_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        # Translation only runs TypeScript tooling. Avoid the package prepare
+        # hook, which builds the full Next.js application once per language.
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # The old primary key was
+      # `translation-cache-${{ hashFiles('scripts/translate-docs/.translation-cache.json') }}`,
+      # which ALWAYS evaluated to the bare literal `translation-cache-`: the file
+      # is gitignored (.gitignore:68), so it is absent at checkout and
+      # `hashFiles` returns "". Every restore that ever worked was a
+      # `restore-keys` prefix match, and a total miss is indistinguishable from a
+      # hit — nothing fails, nothing warns, the job just spends nine minutes and
+      # a full LLM pass. Hence the explicit warning step below: a miss is the
+      # expensive case and it should say so in the run summary.
+      - name: Restore translation cache
+        id: restore-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: scripts/translate-docs/.translation-cache.json
+          # Per language, newest-first, falling back to the merged entry that
+          # `consolidate` still writes. `github.run_id` is monotonic, so the
+          # prefix match returns this language's most recent fragment.
+          key: translation-cache-${{ matrix.lang }}-${{ github.run_id }}
+          restore-keys: |
+            translation-cache-${{ matrix.lang }}-
+            translation-cache-
+
+      - name: Warn on translation cache miss
+        if: steps.restore-cache.outputs.cache-matched-key == ''
+        run: |
+          echo "::warning title=Translation cache MISS::${{ matrix.lang }} will re-translate every page (~9 runner-minutes and one full LLM pass)"
+
+      - name: Translate ${{ matrix.lang }}
+        run: bun run translate --languages ${{ matrix.lang }} ${{ inputs.force == true && '--force' || '' }}
+
+      # Fail the language that actually broke, before its artifact is uploaded.
+      # `consolidate` re-runs this on the merged tree, but only after every
+      # language finished — attributing a failure there means reading 14 logs.
+      # This also covers broken image paths (see findBrokenAssetRefs), the class
+      # that shipped every logo broken in all 14 translated READMEs: valid MDX,
+      # valid YAML, so neither `mintlify validate` nor the MDX parse saw it.
+      - name: Validate translated pages parse and images resolve
+        run: bun run validate:mdx
+
+      # Save HERE, per language, in the job that produced the work and directly
+      # after the step that proved it good.
+      #
+      # The only save used to be `consolidate`'s, downstream of BOTH the matrix
+      # gate (`if: needs.translate.result == 'success'`) and `mintlify validate`.
+      # So one page failing validation in one language threw away the cache for
+      # all fourteen — Aug 6 lost ~110 minutes of completed translation to a
+      # single `ko` page — and a nav mismatch in consolidate did the same on
+      # Aug 12. Each fragment is already authoritative for its own language, so
+      # there is nothing a merge has to happen first for.
+      #
+      # The `cache-hit` guard is the same one `build-daemon.yml:137` carries, and
+      # it is load-bearing here for a specific reason: the key embeds
+      # `github.run_id`, which is REUSED when someone re-runs a failed job. On
+      # that second attempt the primary key already exists, so the restore above
+      # scores an exact hit and this save would collide with itself.
+      - name: Save translation cache fragment
+        if: steps.restore-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: scripts/translate-docs/.translation-cache.json
+          key: translation-cache-${{ matrix.lang }}-${{ github.run_id }}
+
+      - name: Upload translated files
+        uses: actions/upload-artifact@v7
+        with:
+          name: translations-${{ matrix.lang }}
+          path: |
+            docs/${{ matrix.lang }}/
+            docs/i18n/README.${{ matrix.lang }}.md
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload cache fragment
+        uses: actions/upload-artifact@v7
+        with:
+          name: cache-${{ matrix.lang }}
+          path: scripts/translate-docs/.translation-cache.json
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: true
+
+  consolidate:
+    needs: [prepare, translate]
+    # Never publish a partial translation set. A failed language produces no
+    # artifact and would otherwise leave that locale silently stale.
+    if: needs.translate.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Download all translations
+        uses: actions/download-artifact@v8
+        with:
+          pattern: translations-*
+          merge-multiple: true
+          path: docs
+
+      # The per-language jobs prune their own tree, but this job re-checks out
+      # main and *overlays* the artifacts — download-artifact only adds files,
+      # it never deletes — so any orphan committed on main is resurrected here.
+      # Prune again on the merged tree, which is what actually gets committed.
+      - name: Prune translations whose English source was deleted
+        run: >-
+          bun scripts/translate-docs/cli.ts --prune
+          --languages zh,ja,ko,es,pt-br,de,fr,ru,hi,tr,vi,it,ar,he
+
+      - name: Update localized product navigation
+        run: >-
+          bun scripts/translate-docs/cli.ts --update-nav
+          --languages zh,ja,ko,es,pt-br,de,fr,ru,hi,tr,vi,it,ar,he
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install Mintlify CLI
+        run: npm install -g mintlify@4.2.680
+
+      - name: Validate generated docs config
+        working-directory: docs
+        run: mintlify validate
+
+      # Parses every page AND checks that every image reference resolves on
+      # disk — a broken image path is valid MDX, so `mintlify validate` above
+      # passes it straight through to a reader's browser.
+      - name: Validate translated MDX pages and image references
+        run: bun run validate:mdx
+
+      - name: Download cache fragments
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cache-*
+          path: cache-fragments/
+
+      - name: Merge translation caches
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = require('path');
+          const dir = 'cache-fragments';
+          if (!fs.existsSync(dir)) { console.log('No cache fragments found, skipping merge'); process.exit(0); }
+          const merged = { sourceHash: '', lastUpdated: '', translations: {} };
+          let baseLoaded = false;
+          for (const sub of fs.readdirSync(dir).sort()) {
+            const f = path.join(dir, sub, '.translation-cache.json');
+            if (!fs.existsSync(f)) continue;
+            const data = JSON.parse(fs.readFileSync(f, 'utf-8'));
+            // Load base entries from the first fragment (all fragments share the same base)
+            if (!baseLoaded) {
+              Object.assign(merged.translations, data.translations);
+              baseLoaded = true;
+            }
+            // Each fragment is authoritative only for its own language.
+            // Extract lang from directory name: 'cache-zh' -> 'zh'
+            const lang = sub.replace('cache-', '');
+            const suffix = '::' + lang;
+            for (const [key, value] of Object.entries(data.translations)) {
+              if (key.endsWith(suffix)) {
+                merged.translations[key] = value;
+              }
+            }
+            if (data.lastUpdated > merged.lastUpdated) {
+              merged.lastUpdated = data.lastUpdated;
+            }
+          }
+          fs.mkdirSync('scripts/translate-docs', { recursive: true });
+          fs.writeFileSync(
+            'scripts/translate-docs/.translation-cache.json',
+            JSON.stringify(merged, null, 2)
+          );
+          console.log('Merged ' + Object.keys(merged.translations).length + ' cache entries');
+          "
+
+      - name: Save translation cache
+        uses: actions/cache/save@v6
+        with:
+          path: scripts/translate-docs/.translation-cache.json
+          key: translation-cache-${{ hashFiles('scripts/translate-docs/.translation-cache.json') }}
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update PR with translations
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # When an auto-translation PR is already open, push to its branch
+          # instead of dropping these translations. Previously this step
+          # exited early if any open PR matched, which combined with the
+          # cache-save above meant lost translations were never re-attempted
+          # (cache marked them done, file changes were never committed).
+          EXISTING_PR=$(gh pr list --base main --search "[auto] update translations" --state open --json number,headRefName --limit 1)
+          EXISTING_COUNT=$(echo "$EXISTING_PR" | jq length)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ "$EXISTING_COUNT" -gt 0 ]; then
+            EXISTING_BRANCH=$(echo "$EXISTING_PR" | jq -r '.[0].headRefName')
+            EXISTING_NUMBER=$(echo "$EXISTING_PR" | jq -r '.[0].number')
+            echo "Updating existing PR #$EXISTING_NUMBER on branch $EXISTING_BRANCH"
+
+            # Snapshot freshly-generated translations and the merged cache,
+            # then switch branches and replay them on top so newer English
+            # source wins over whatever the existing PR branch had.
+            git reset HEAD
+            tar -czf /tmp/translations.tar.gz docs/ scripts/translate-docs/.translation-cache.json
+            git fetch origin "$EXISTING_BRANCH"
+            git checkout -f -B "$EXISTING_BRANCH" "origin/$EXISTING_BRANCH"
+            tar -xzf /tmp/translations.tar.gz
+            rm /tmp/translations.tar.gz
+            BRANCH="$EXISTING_BRANCH"
+          else
+            BRANCH="auto/translate-docs-$(date +%Y%m%d-%H%M)"
+            git checkout -b "$BRANCH"
+          fi
+
+          # Validate again after overlaying an existing translation branch so
+          # every file that will be committed is covered by both validators.
+          (cd docs && mintlify validate)
+          bun run validate:mdx
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No new translation changes to push. Done."
+            exit 0
+          fi
+
+          git commit -m "docs: update translations for changed English sources"
+          git push origin "$BRANCH"
+
+          if [ "$EXISTING_COUNT" -eq 0 ]; then
+            PR_BODY="## Summary
+
+            Automated translation update triggered by changes to English documentation sources.
+
+            - Only changed pages were re-translated (content-hash cache)
+            - All 14 languages across 3 tiers (parallel matrix)"
+
+            gh pr create \
+              --title "[auto] update translations" \
+              --body "$PR_BODY" \
+              --base main \
+              --head "$BRANCH"
+          fi

@@ -1,0 +1,1159 @@
+/* ============================================================
+   failproof_ai — audit-page-specific styles
+   Brutalist pixel-craft, /audit-only widgets.
+   Site-wide tokens, fonts, body atmosphere, .app-header / .btn /
+   .tab / .section / .panel / .report all moved to globals.css
+   so they apply everywhere (and no longer leak when navigating
+   away from /audit back to /policies or /projects).
+   ============================================================ */
+
+
+/* ───────────────────────── 00 EMPTY + RUNNING (full-page states) ───────────────────────── */
+
+.empty-section, .running-section { padding-top: 80px; padding-bottom: 96px; }
+
+.empty-panel, .running-panel {
+  padding: 48px 56px;
+  display: flex; flex-direction: column;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+}
+
+.empty-glyph { align-self: center; text-align: center; margin-bottom: 28px; }
+.empty-glyph-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 14px);
+  grid-template-rows: repeat(6, 14px);
+  gap: 3px;
+  padding: 16px;
+  border: 1px solid var(--line-2);
+  background: var(--bg);
+  margin: 0 auto 14px;
+}
+.empty-glyph-grid .px { background: transparent; }
+.empty-glyph-grid .px.on { background: var(--accent-pink); }
+.empty-glyph-label {
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--dim);
+}
+
+.empty-headline {
+  font-family: var(--font-display);
+  font-size: clamp(32px, 4.6vw, 48px);
+  letter-spacing: 0.1em; line-height: 1.05;
+  text-transform: lowercase;
+  color: var(--ink);
+  margin: 0 0 16px;
+  text-wrap: balance;
+  text-align: center;
+}
+.empty-sub {
+  font-family: var(--font-mono); font-size: 14px;
+  line-height: 1.65; color: var(--ink-2);
+  max-width: 580px;
+  margin: 0 auto 32px;
+  text-align: center;
+}
+
+.empty-actions {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 12px;
+}
+.empty-cta {
+  padding: 12px 24px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+}
+.empty-meta {
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--dim);
+}
+
+.running-panel { padding: 36px 40px; }
+.running-header {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: 22px;
+  font-family: var(--font-mono); font-size: 13px;
+}
+.running-prompt { color: var(--accent-green); }
+.running-cmd   { color: var(--ink); letter-spacing: 0.02em; }
+.running-cursor {
+  color: var(--accent-pink);
+  margin-left: 4px;
+  animation: cursor-blink 900ms steps(2, end) infinite;
+}
+@keyframes cursor-blink { 50% { opacity: 0; } }
+
+.running-stages {
+  list-style: none; padding: 0; margin: 0 0 28px;
+  display: flex; flex-direction: column;
+}
+.running-stage {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 14px; align-items: start;
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--line);
+  font-family: var(--font-mono);
+}
+.running-stage:last-child { border-bottom: none; }
+.running-marker {
+  font-family: var(--font-mono); font-size: 12px;
+  letter-spacing: -1px;
+  margin-top: 1px;
+}
+.running-stage.queued { color: var(--dim); }
+.running-stage.queued .running-marker { color: var(--line-2); }
+.running-stage.active { color: var(--ink); }
+.running-stage.active .running-marker { color: var(--accent-pink); }
+.running-stage.done   { color: var(--ink-2); }
+.running-stage.done .running-marker { color: var(--accent-green); }
+.running-stage.done .running-stage-label {
+  text-decoration: line-through;
+  text-decoration-color: var(--line-2);
+}
+.running-stage-label { font-size: 13px; letter-spacing: 0.04em; }
+.running-stage-detail {
+  font-size: 11px; color: var(--ink-2);
+  letter-spacing: 0.02em;
+  margin-top: 4px;
+}
+.running-stage-spin {
+  font-family: var(--font-mono); font-size: 16px;
+  color: var(--accent-pink);
+  align-self: center;
+  animation: spin-step 700ms steps(4, end) infinite;
+}
+@keyframes spin-step { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+.running-bar-label {
+  display: flex; justify-content: space-between;
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+.running-bar-track {
+  position: relative;
+  height: 6px; background: var(--bg);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.running-bar-fill {
+  position: relative;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-pink) 0%, #e89aaf 100%);
+  transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.running-bar-fill::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%, transparent 40%,
+    rgba(255,255,255,0.35) 50%,
+    transparent 60%, transparent 100%
+  );
+  animation: bar-shine 1600ms linear infinite;
+}
+@keyframes bar-shine {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+.running-foot {
+  margin-top: 22px;
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .empty-panel, .running-panel { padding: 32px 24px; }
+}
+
+/* ───────────────────────── audit page shell ───────────────────────── */
+
+/* the audit page intentionally runs narrower than the global .report — the
+   archetype hero, findings cards, and score-share card are tuned for a
+   ~1400px-max layout where the headline line measure stays "billboard"
+   tight. On a 2400px+ monitor we still want to break out of the 1180px
+   feel that used to leave too much black on both flanks; clamp up to
+   1480px and let `.archetype-frame` cap itself further so the hero doesn't
+   stretch past its compositional break-point. */
+.report {
+  width: 100%;
+  max-width: clamp(720px, 92vw, 1480px);
+  margin: 0 auto;
+  padding: 0 clamp(20px, 3vw, 48px);
+}
+
+.section {
+  padding: 64px 0;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+.section:last-child { border-bottom: none; }
+
+.section-mast {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 24px; margin-bottom: 28px; flex-wrap: wrap;
+}
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--accent-green);
+  display: inline-flex; align-items: baseline; gap: 10px;
+}
+/* Kept in step with globals.css, which declares the same selector: this file
+ * loads after it, so a value left behind here silently wins. The leader and
+ * separator inherit the label's colour — one label, one colour. */
+.section-label .glyph { color: inherit; letter-spacing: -2px; }
+.section-label .sep { color: inherit; }
+.section-meta {
+  font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--dim);
+}
+.section-meta .g { color: var(--accent-green); }
+.section-meta .p { color: var(--accent-pink); }
+.section-h {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.05; letter-spacing: 0.11em;
+  font-weight: 400; color: var(--ink);
+  margin: 0 0 18px;
+  text-transform: lowercase;
+  text-wrap: balance;
+}
+
+/* ───────────────────────── footer ───────────────────────── */
+
+.report-footer {
+  padding: 48px 32px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  text-align: center;
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.15em; text-transform: uppercase;
+  color: var(--dim);
+}
+/* Fixed variant — used on the empty/loading states where the page is
+   short and a normal in-flow footer ends up floating mid-viewport. Pins
+   it to the bottom of the viewport so it doesn't scroll with the page. */
+.report-footer--fixed {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  padding: 16px 32px;
+  z-index: 10;
+}
+.report-footer .brand-mark {
+  color: var(--accent-pink); font-family: var(--font-mono);
+  font-size: 14px; letter-spacing: -2px; font-weight: 700;
+  margin-right: 6px;
+}
+
+/* ───────────────────────── auth dialog (set-a-reminder gate) ─────────────────────────
+ * The dialog's own styles moved to app/audit/_components/auth-dialog.css, which
+ * <AuthDialog> imports directly, so the modal is styled on every route that
+ * renders it (/audit and now /settings) rather than only this route stylesheet.
+ * The `.auth-status-pill` below stays here — it belongs to the /audit return
+ * CTA (come-back-better-section), not the dialog. */
+
+/* status pill in the return CTA: shows current logged-in email */
+.auth-status-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-top: 16px;
+  padding: 6px 10px;
+  border: 1px dashed var(--line-2);
+  font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-2);
+}
+.auth-status-pill .dot {
+  width: 7px; height: 7px;
+  background: var(--accent-green); display: inline-block;
+  box-shadow: 0 0 6px rgba(102,209,181,0.55);
+}
+.auth-status-pill .email { color: var(--accent-green); }
+
+/* responsive */
+@media (max-width: 960px) {
+  .report { padding: 0 20px; }
+  .archetype-frame { padding: 32px 24px; }
+  .arch-body { grid-template-columns: 1fr; gap: 32px; }
+  .arch-meta-grid { grid-template-columns: 1fr; gap: 16px; }
+  .score-grid { grid-template-columns: 1fr; gap: 16px; }
+  .finding-body { grid-template-columns: 1fr; }
+  .finding-block { border-right: none !important; }
+  .policies-grid { grid-template-columns: 1fr; }
+  .share-grid { grid-template-columns: 1fr; }
+  .strength-row { grid-template-columns: 40px 1fr; }
+  .strength-metric { grid-column: 2; text-align: left; margin-top: 6px; }
+  .return-hook { padding: 28px 24px; }
+}
+
+/* reduced-motion: silence the ambient terminal motion (blinking cursor,
+   spinner, marquee shine, status pulse) so vestibular-sensitive users get a
+   still UI. Functional progress (.running-bar-fill width) still updates;
+   only the decorative loops are stopped. */
+@media (prefers-reduced-motion: reduce) {
+  .running-cursor,
+  .running-stage-spin,
+  .running-bar-fill::after,
+  .auth-status-pill .dot {
+    animation: none;
+  }
+  .running-bar-fill { transition: none; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   audit-progress-strip — sticky banner pinned to the top of the viewport
+   while a re-audit is in flight. Pink hard-offset shadow matches the
+   page's `.share-btn:hover` vocabulary. Right-edge pulse is a CSS-only
+   keyframe (transform-only — no layout thrash) and is not a fake
+   progress bar.
+   ───────────────────────────────────────────────────────────────────── */
+.audit-progress-strip {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--accent-pink);
+  font-family: var(--font-mono);
+  /* Slide in from above on mount */
+  animation: audit-progress-slide-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.audit-progress-strip--failed {
+  border-bottom-color: var(--accent-pink);
+  background: linear-gradient(to right, var(--accent-pink-bg), var(--bg-2));
+}
+.audit-progress-strip__inner {
+  position: relative;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 12px clamp(20px, 3vw, 48px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.audit-progress-strip__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+}
+.audit-progress-strip--failed .audit-progress-strip__label { color: var(--accent-pink); }
+.audit-progress-strip__elapsed {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--accent-pink);
+  letter-spacing: 0.08em;
+}
+.audit-progress-strip__spinner {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid var(--accent-pink);
+  border-top-color: transparent;
+  animation: audit-progress-spin 800ms linear infinite;
+}
+.audit-progress-strip__x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--accent-pink);
+  color: var(--accent-pink);
+  font-size: 11px;
+  line-height: 1;
+}
+.audit-progress-strip__dismiss {
+  background: transparent;
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+  padding: 5px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: lowercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+.audit-progress-strip__dismiss:hover {
+  border-color: var(--accent-pink);
+  color: var(--accent-pink);
+}
+.audit-progress-strip__pulse {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-pink) 20%,
+    var(--accent-pink) 80%,
+    transparent 100%
+  );
+  transform-origin: left center;
+  animation: audit-progress-pulse 2400ms cubic-bezier(0.55, 0.1, 0.45, 0.9) infinite;
+}
+@keyframes audit-progress-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes audit-progress-pulse {
+  0%   { transform: scaleX(0)   translateX(0%);    opacity: 0.4; }
+  50%  { transform: scaleX(0.6) translateX(20%);   opacity: 1; }
+  100% { transform: scaleX(0)   translateX(100%);  opacity: 0.2; }
+}
+@keyframes audit-progress-slide-in {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .audit-progress-strip { animation: none; }
+  .audit-progress-strip__spinner { animation: none; border-top-color: var(--accent-pink); }
+  .audit-progress-strip__pulse { animation: none; opacity: 0.4; transform: scaleX(0.4) translateX(30%); }
+}
+
+/* ============================================================
+   AUDIT POSTER — section 01.
+   Single-screen capture region + 3 share buttons + scroll hint.
+   Calm: 1px borders, no hard shadows, no scanlines.
+   ============================================================ */
+
+.poster-section {
+  /* Fit the viewport exactly: poster + share row + scroll hint all
+   *  visible on the first screen. The header is ~52px tall (14px
+   *  padding × 2 + ~18px content + 1px border). Using `height` (not
+   *  min-height) means the section never overflows; the poster's
+   *  flex column shrinks its body to fit. */
+  height: calc(100vh - 52px);
+  padding: 20px 0 16px;
+  border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  gap: 14px;
+}
+
+.poster {
+  position: relative;
+  padding: 22px 40px;
+  border: 1px dashed var(--accent-pink-soft);
+  background: var(--bg-2);
+  display: flex; flex-direction: column;
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* poster lays out as head / centered body / footer so the body anchors
+ *  vertically in the middle even when the poster fills the viewport. */
+.poster-head { flex: 0 0 auto; }
+.poster-body { flex: 1 1 auto; }
+.poster-foot { flex: 0 0 auto; }
+
+/* head ────────────────────────────────────────────────────── */
+.poster-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 18px; flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--line);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+.poster-wordmark {
+  color: var(--ink);
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.poster-wordmark .poster-logo {
+  height: 18px;
+  width: auto;
+  display: block;
+}
+.poster-wordmark .poster-sep { color: var(--dim); margin: 0 2px; }
+.poster-meta { color: var(--dim); }
+.poster-meta .poster-ix { color: var(--accent-pink); }
+.poster-meta .of { color: var(--dim); }
+.poster-meta .poster-sep { color: var(--dim); }
+
+/* body — vertical centered stack: sigil → persona → score ─── */
+.poster-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 2.6vh, 30px);
+  text-align: center;
+  padding: clamp(6px, 1.4vh, 16px) 0;
+  min-height: 0;
+}
+
+/* sigil — flat 8x8, anchored at the top of the centered stack ── */
+.poster-sigil .sigil {
+  display: grid;
+  grid-template-columns: repeat(8, clamp(10px, 1.7vh, 16px));
+  grid-template-rows: repeat(8, clamp(10px, 1.7vh, 16px));
+  gap: 2px;
+  padding: clamp(6px, 1vh, 10px);
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+}
+
+/* persona — name + keywords + rarity stacked centered ──────── */
+.poster-persona {
+  min-width: 0;
+  display: flex; flex-direction: column; align-items: center;
+  gap: clamp(6px, 1.2vh, 14px);
+}
+.poster-persona .persona-name {
+  font-family: var(--font-display);
+  font-size: clamp(32px, 6.5vh, 64px);
+  letter-spacing: 0.03em;
+  line-height: 0.95;
+  margin: 0;
+  color: var(--ink);
+  text-transform: lowercase;
+  text-wrap: balance;
+}
+.poster-persona .persona-keywords {
+  font-family: var(--font-display);
+  font-size: clamp(16px, 2.2vh, 22px);
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+}
+.poster-persona .persona-keywords .kw-0 { color: var(--accent-green); }
+.poster-persona .persona-keywords .kw-1 { color: var(--ink); }
+.poster-persona .persona-keywords .kw-2 { color: var(--accent-pink); }
+.poster-persona .persona-keywords .kw-sep { color: var(--dim); margin: 0 10px; }
+.poster-persona .persona-rarity {
+  font-family: var(--font-mono);
+  font-size: clamp(11px, 1.3vh, 13px);
+  color: var(--accent-green);
+  letter-spacing: 0.02em;
+}
+.poster-persona .persona-rarity .lbl { color: var(--dim); }
+.poster-persona .persona-rarity .pct { color: var(--accent-pink); font-weight: 600; }
+
+/* score — score-n + /100, baseline-aligned and centered in the card. */
+.poster-score {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: clamp(10px, 1.4vh, 16px);
+}
+.poster-score .score-n {
+  /* Mono font — Bitcount Prop Single renders unreliably in html2canvas
+   *  at this size (phantom pixels). JetBrains Mono exports cleanly. */
+  font-family: var(--font-mono);
+  font-size: clamp(56px, 11vh, 112px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--accent-pink);
+  font-variant-numeric: tabular-nums;
+}
+.poster-score .score-of {
+  font-family: var(--font-mono);
+  font-size: clamp(16px, 2vh, 22px);
+  color: var(--dim);
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+.poster-sigil .sigil .px { background: transparent; }
+.poster-sigil .sigil .px.on { background: var(--ink); }
+.poster-sigil .sigil .px.p  { background: var(--accent-pink); }
+.poster-sigil .sigil .px.g  { background: var(--accent-green); }
+.poster-sigil .sigil .px.d  { background: var(--dim); }
+
+/* foot — brand stamp (left) + CTA (right) ─────────────────────── */
+.poster-foot {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+.poster-brand {
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.5), 0 0 14px rgba(255, 255, 255, 0.22);
+}
+.poster-cta { color: var(--accent-green); letter-spacing: 0.04em; }
+.poster-cta .arrow { color: var(--accent-pink); margin: 0 4px; }
+/* glow just the copy-paste command so it reads as the actionable bit */
+.poster-cta .cta-cmd {
+  text-shadow: 0 0 6px rgba(102, 209, 181, 0.6), 0 0 14px rgba(102, 209, 181, 0.3);
+}
+
+/* share-row — UI only, outside the PNG capture ─────────────── */
+.poster-share-row {
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  flex: 0 0 auto;
+}
+.poster-share-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+.poster-share-btn:hover {
+  border-color: var(--accent-pink);
+  color: var(--accent-pink);
+  background: var(--accent-pink-bg);
+}
+.poster-share-btn:disabled {
+  opacity: 0.55; cursor: wait;
+}
+.poster-share-btn:focus-visible,
+.cadence-btn:focus-visible,
+.invite-btn:focus-visible,
+.install-all-btn:focus-visible,
+.copy-icon-btn:focus-visible,
+.fix-install-btn:focus-visible {
+  outline: 2px solid var(--accent-pink);
+  outline-offset: 2px;
+}
+.poster-share-btn .mark { color: var(--accent-pink); font-weight: 700; }
+
+/* scroll-hint — small footer below share row ───────────────── */
+.poster-scroll-hint {
+  text-align: center;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+  color: var(--dim);
+}
+.poster-scroll-hint .arrow { color: var(--accent-pink); margin-left: 6px; }
+
+@media (max-width: 720px) {
+  .poster { padding: 24px 22px; }
+  .poster-body { gap: 28px; padding: 12px 0; }
+  .poster-share-row { grid-template-columns: 1fr; }
+  .poster-head { font-size: 12px; }
+  .poster-score .score-n { font-size: clamp(72px, 18vw, 120px); }
+  .poster-persona .persona-name { font-size: clamp(36px, 9vw, 56px); }
+}
+
+/* ============================================================
+   SHARED SECTION SHELL — used by sections 02-05 on /audit.
+   ============================================================ */
+.audit-sec {
+  padding: 48px 0;
+  border-bottom: 1px solid var(--line);
+}
+.audit-sec:last-child { border-bottom: none; }
+
+.audit-sec-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+.audit-sec-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-green);
+}
+.audit-sec-eyebrow .ix { color: var(--dim); margin-right: 8px; }
+.audit-sec-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+}
+.audit-sec-meta strong { color: var(--ink); font-weight: 600; }
+.audit-sec-title {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 4px 0 18px;
+}
+
+/* ============================================================
+   STRENGTHS — section 02. ✓ rows.
+   ============================================================ */
+.strength-list {
+  display: flex; flex-direction: column;
+}
+.strength-row {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: baseline;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--line);
+  font-family: var(--font-mono);
+}
+.strength-row:last-child { border-bottom: none; }
+.strength-check {
+  color: var(--accent-green);
+  font-size: 14px;
+  line-height: 1;
+}
+.strength-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.strength-headline {
+  font-size: 13px;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+.strength-detail {
+  font-size: 11px;
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+}
+.strength-metric {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  color: var(--accent-green);
+  text-align: right;
+  line-height: 1;
+  white-space: nowrap;
+}
+.strength-metric .unit {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+/* ============================================================
+   QUIRKS — section 03. 4-column table.
+   ============================================================ */
+.quirks-table { font-family: var(--font-mono); }
+.quirks-thead, .quirks-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 90px 100px;
+  gap: 14px;
+  align-items: center;
+}
+.quirks-thead {
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.quirks-thead span:last-child { text-align: right; }
+.quirks-row {
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 12px;
+}
+.quirks-row:last-child { border-bottom: none; }
+.q-when { color: var(--dim); font-size: 11px; }
+.q-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.q-title { color: var(--ink); font-size: 12px; }
+.q-policy {
+  color: var(--dim);
+  font-size: 10px;
+}
+.q-policy code { color: var(--accent-green); background: transparent; }
+.q-pill {
+  border: 1px solid var(--line-2);
+  padding: 2px 8px;
+  font-size: 10px;
+  text-align: center;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  justify-self: start;
+}
+.q-pill-high {
+  color: var(--accent-pink);
+  border-color: rgba(228, 88, 124, 0.4);
+  background: rgba(228, 88, 124, 0.06);
+}
+.q-pill-medium {
+  color: var(--amber);
+  border-color: rgba(232, 196, 106, 0.4);
+  background: var(--amber-bg);
+}
+.q-pill-low {
+  color: var(--ink-2);
+}
+.q-recur {
+  text-align: right;
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* ============================================================
+   HOW TO IMPROVE — section 04. Fix cards.
+   ============================================================ */
+.audit-sec-sub {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: -10px 0 18px;
+  line-height: 1.55;
+}
+.audit-sec-sub strong { color: var(--ink); font-weight: 600; }
+
+.install-all-btn {
+  border: 1px solid var(--accent-pink);
+  background: var(--accent-pink-bg);
+  color: var(--accent-pink);
+  padding: 8px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+.install-all-btn:hover { background: rgba(228, 88, 124, 0.18); }
+
+.fix-list { display: flex; flex-direction: column; }
+.fix-row {
+  display: grid;
+  grid-template-columns: 1fr minmax(280px, auto);
+  gap: 24px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.fix-row:last-child { border-bottom: none; }
+.fix-row-info { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.fix-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+  font-weight: 500;
+}
+.fix-desc {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+.fix-row-cmd {
+  display: flex; align-items: stretch; gap: 6px;
+  min-width: 0;
+}
+.fix-cmd-code {
+  flex: 1; min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-green);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow-x: auto;
+  display: flex; align-items: center;
+}
+.copy-icon-btn {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink-2);
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 36px;
+}
+.copy-icon-btn:hover {
+  color: var(--accent-pink);
+  border-color: var(--accent-pink);
+}
+
+/* ============================================================
+   COME BACK BETTER — section 05. Two cards.
+   ============================================================ */
+.cbb-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+@media (max-width: 720px) {
+  .cbb-grid { grid-template-columns: 1fr; }
+}
+.cbb-card {
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  padding: 18px 20px;
+  display: flex; flex-direction: column;
+  gap: 12px;
+}
+.cbb-card-title {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+.cbb-card-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+
+/* ── Section 05: scheduled audit panel ───────────────────────────────────────
+   The mock puts the scan controls at 1.3fr against the share card's 1fr, with
+   a pink rail on the panel that acts. Colours are the design-system tokens the
+   rest of the app already uses (--accent-pink #e4587c, --accent-green #66d1b5);
+   the mock's #ff2d78 / #35d07f were approximations of them. */
+.cbb-card-primary {
+  border-left: 2px solid var(--accent-pink);
+}
+.cbb-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cbb-pill {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  padding: 4px 8px;
+  white-space: nowrap;
+  border: 1px solid var(--line-2);
+  color: var(--dim);
+}
+.cbb-pill.on {
+  border-color: var(--accent-green-shadow);
+  color: var(--accent-green);
+}
+
+.cbb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.cbb-row-interval { gap: 9px; flex-wrap: wrap; }
+.cbb-muted { color: var(--ink-2); }
+.cbb-hint { color: var(--dim); font-size: 10.5px; }
+.cbb-strong { color: var(--ink); }
+
+.cbb-num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  width: 58px;
+  padding: 5px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  color: var(--ink);
+  border-radius: 0;
+}
+.cbb-num:focus-visible {
+  outline: 2px solid var(--accent-pink);
+  outline-offset: 1px;
+}
+
+/* The switch /policies uses — copied shape, not a new control. */
+.cbb-toggle {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  border: none;
+  background: var(--line-2);
+  cursor: pointer;
+  padding: 0;
+  transition: background 120ms ease;
+}
+.cbb-toggle[data-on="true"] { background: var(--accent-pink); }
+.cbb-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+.cbb-toggle:focus-visible { outline: 2px solid var(--accent-pink); outline-offset: 2px; }
+.cbb-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg);
+  transition: transform 120ms ease;
+}
+.cbb-toggle[data-on="true"] .cbb-toggle-knob { transform: translateX(16px); }
+
+.cbb-identity {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cbb-email { color: var(--accent-green); }
+.cbb-link-inline {
+  font-size: 11px;
+  color: var(--dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.cbb-link-inline:hover { color: var(--ink); }
+
+.cbb-warn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--accent-pink);
+}
+.cbb-warn-inline { color: var(--accent-pink); }
+
+.cbb-foot-block {
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.cbb-run-btn {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: center;
+  padding: 8px 12px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.cbb-run-btn:hover:not(:disabled) { border-color: var(--accent-pink); color: var(--accent-pink); }
+.cbb-run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cbb-run-btn:focus-visible { outline: 2px solid var(--accent-pink); outline-offset: 2px; }
+
+.cbb-note {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.55;
+  margin-top: 14px;
+}
+
+.perks-progress {
+  height: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  position: relative;
+  margin: 4px 0;
+}
+.perks-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent-pink);
+  transition: width 240ms ease;
+}
+.perks-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.perks-meta strong { color: var(--accent-pink); font-weight: 600; }
+.invite-btn {
+  align-self: flex-start;
+  border: 1px solid var(--accent-pink);
+  background: var(--accent-pink-bg);
+  color: var(--accent-pink);
+  padding: 8px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+.invite-btn:hover { background: rgba(228, 88, 124, 0.18); }
+
+.invite-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 90px;
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+}
+.invite-summary {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+.invite-summary .invite-valid { color: var(--accent-green); }
+.invite-summary .invite-invalid { color: var(--accent-pink); }
+.cbb-foot {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .cbb-grid { grid-template-columns: 1fr; }
+  .fix-row { grid-template-columns: 1fr; gap: 8px; }
+  .fix-row-cmd { min-width: 0; }
+  .quirks-thead, .quirks-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 16px 0;
+  }
+  .quirks-thead { display: none; }
+}
+/* ── Section 05: the share card, now alone ───────────────────────────────────
+   The scheduled-audit panel moved to /settings, so this is the only card in
+   the section. Capped rather than left full-bleed: a single card stretched
+   across the report width reads as an empty row with something in the corner,
+   and the invite is a small ask that should look like one. */
+.share-card {
+  max-width: 420px;
+}

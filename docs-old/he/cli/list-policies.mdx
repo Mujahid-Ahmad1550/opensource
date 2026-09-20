@@ -1,0 +1,32 @@
+---
+---
+title: רשימת מדיניויות
+description: "ראה אילו מדיניויות מופעלות, הפרמטרים שלהן, ומדיניויות מותאמות אישית"
+---
+
+```bash
+failproofai policies
+```
+
+מציג את כל המדיניויות עם הסטטוס שלהן, הפרמטרים המוגדרים, והמדיניויות המותאמות אישית.
+
+## דוגמה לפלט
+
+```text
+Failproof AI Hook Policies (user)
+
+  Status  Name                          Description
+  ──────  ──────────────────────────────────────────────────────────────
+  ✓       block-sudo                    Block sudo commands
+            allowPatterns: ["sudo systemctl status"]
+  ✓       block-rm-rf                   Block recursive deletions
+  ✗       block-curl-pipe-sh            Block curl|bash patterns
+  ✓       sanitize-api-keys             Redact API keys from output
+            additionalPatterns: [{ regex: "MY_TOKEN_...", label: "..." }]
+
+  ── Custom Policies (/home/alice/myproject/my-policies.js) ──────────────
+  ✓       require-jira-ticket           Block commits without ticket
+  ✓       approval-gate                 Approval gate for destructive ops
+```
+
+מפתחות לא ידועים ב־`policyParams` מסומנים כאן כדי שתוכל לתפוס שגיאות הקלדה מוקדם.

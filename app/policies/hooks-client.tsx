@@ -1,0 +1,2310 @@
+"use client";
+
+import { useState, useEffect, useCallback, useMemo, useRef, useTransition } from "react";
+import * as React from "react";
+import { createPortal } from "react-dom";
+import Link from "next/link";
+import { Check, ChevronDown, Code, Copy, Package, Plus, Settings, Shield, ShieldAlert, ShieldCheck, ShieldX, Trash2, TriangleAlert, X } from "lucide-react";
+import PaginationControls from "@/app/components/pagination-controls";
+import { getHookActivityAction, searchHookActivityAction } from "@/app/actions/get-hook-activity";
+import type { HookActivityPayload } from "@/app/actions/get-hook-activity";
+import { getActivePausesAction } from "@/app/actions/get-active-pauses";
+import type { ActivePause } from "@/src/hooks/session-pause";
+import { PausedBanner, PausedNote, PausedPill } from "@/app/components/pause-notices";
+import { getHooksConfigAction } from "@/app/actions/get-hooks-config";
+import type { HooksConfigPayload, InstalledPackInfo, PolicyInfo } from "@/app/actions/get-hooks-config";
+import type { IntegrationType } from "@/src/hooks/types";
+import { toggleCustomPolicyAction } from "@/app/actions/update-hooks-config";
+import {
+  addBundledPackWebAction,
+  addPackWebAction,
+  previewPackWebAction,
+  removePackWebAction,
+  togglePackPolicyAction,
+} from "@/app/actions/pack-actions";
+import type { PackPreviewResult } from "@/app/actions/pack-actions";
+import { installHooksWebAction, removeHooksWebAction } from "@/app/actions/install-hooks-web";
+import { updatePolicyParamsAction } from "@/app/actions/update-policy-params";
+import { packPolicyParamKey } from "@/src/hooks/pack-param-key";
+import { useAutoRefresh } from "@/contexts/AutoRefreshContext";
+import { usePostHog } from "@/contexts/PostHogContext";
+import { useUrlParams } from "@/lib/use-url-params";
+import { pageToParam, paramToPage } from "@/lib/url-filter-serializers";
+import { getCliLabel, getCliBadgeClasses, KNOWN_CLI_IDS, isKnownCli, type CliId } from "@/lib/cli-registry";
+import { enforcementFor } from "@/src/hooks/enforcement-capability";
+import { formatRelativeTime } from "@/lib/format-duration";
+import { Button } from "@/components/ui/button";
+
+function formatAbsoluteTime(ts: number): string {
+  return new Date(ts).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+
+function shortenSession(sessionId: string | undefined): string {
+  if (!sessionId) return "\u2014";
+  return sessionId.slice(0, 8);
+}
+
+/**
+ * Best-effort extraction of the Claude project folder name from a transcript path.
+ */
+function projectFromTranscriptPath(transcriptPath: string): string | null {
+  const normalized = transcriptPath.replace(/\\/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  const folder = parts[parts.length - 2];
+  if (!folder || folder.startsWith('.')) return null;
+  return folder;
+}
+
+function encodeCwdForUrl(cwd: string): string {
+  // Inverse of decodeFolderName, inlined here so this component file stays
+  // client-side and doesn't pull lib/paths server imports.
+  const driveMatch = /^([A-Za-z]):[\\/](.*)$/.exec(cwd);
+  if (driveMatch) return driveMatch[1] + "--" + driveMatch[2].replace(/[\\/]/g, "-");
+  return cwd.replace(/[\\/]/g, "-");
+}
+
+function SessionCell({
+  sessionId,
+  transcriptPath,
+  integration,
+  cwd,
+}: {
+  sessionId?: string;
+  transcriptPath?: string;
+  integration?: string;
+  cwd?: string;
+}) {
+  if (!sessionId) return <span className="text-muted-foreground">\u2014</span>;
+  const short = shortenSession(sessionId);
+
+  const isCodex = integration === "codex" || (transcriptPath?.includes("/.codex/") ?? false);
+  const isCopilot =
+    integration === "copilot" ||
+    (transcriptPath?.includes("/.copilot/session-state/") ?? false);
+  const isCursor =
+    integration === "cursor" || (transcriptPath?.includes("/.cursor/") ?? false);
+  const isOpenCode =
+    integration === "opencode" ||
+    (transcriptPath?.includes("/.local/share/opencode/") ?? false) ||
+    (transcriptPath?.includes("/.opencode/") ?? false);
+  const isPi =
+    integration === "pi" || (transcriptPath?.includes("/.pi/") ?? false);
+  if (isCodex || isCopilot || isCursor || isOpenCode || isPi) {
+    // The session route auto-detects CLI by file location, so [name] only
+    // affects the breadcrumb. Encode the cwd Claude-style when we have it.
+    const fallbackSeg = isCodex ? "codex" : isCopilot ? "copilot" : isCursor ? "cursor" : isOpenCode ? "opencode" : "pi";
+    const projectSeg = cwd ? encodeCwdForUrl(cwd) : fallbackSeg;
+    return (
+      <Link
+        href={`/project/${encodeURIComponent(projectSeg)}/session/${encodeURIComponent(sessionId)}`}
+        className="text-primary hover:underline font-mono"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {short}
+      </Link>
+    );
+  }
+
+  const project = transcriptPath ? projectFromTranscriptPath(transcriptPath) : null;
+  if (project) {
+    return (
+      <Link
+        href={`/project/${encodeURIComponent(project)}/session/${encodeURIComponent(sessionId)}`}
+        className="text-primary hover:underline font-mono"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {short}
+      </Link>
+    );
+  }
+  return <span className="text-muted-foreground font-mono">{short}</span>;
+}
+
+// -- Badge Components --
+
+function DecisionBadge({ decision }: { decision: "allow" | "deny" | "instruct" }) {
+  if (decision === "deny") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase bg-red-500/10 text-red-400 border border-red-500/20">
+        <ShieldX className="h-3 w-3" />
+        Deny
+      </span>
+    );
+  }
+  if (decision === "instruct") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20">
+        <ShieldAlert className="h-3 w-3" />
+        Instruct
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+      <ShieldCheck className="h-3 w-3" />
+      Allow
+    </span>
+  );
+}
+
+function EventTypeBadge({ eventType }: { eventType: string }) {
+  return (
+    <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[0.6rem] font-medium bg-muted text-muted-foreground border border-border/50">
+      {eventType}
+    </span>
+  );
+}
+
+function IntegrationBadge({ integration }: { integration?: string }) {
+  if (!integration) return null;
+  const label = getCliLabel(integration);
+  const classes = getCliBadgeClasses(integration);
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[0.6rem] font-medium border ${classes}`}
+      title={`Agent CLI: ${label}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function ModeBadge({ mode }: { mode: string }) {
+  const isDefault = mode === "default";
+  // inline-block + max-w-full + truncate: the pill fits its column for known
+  // modes (incl. the longest, "bypassPermissions") and, for any unexpectedly
+  // long / custom mode, ellipsizes inside the pill with a hover tooltip rather
+  // than being hard-clipped mid-word at the cell edge by .activity-data-row > td.
+  return (
+    <span
+      title={mode}
+      className={`inline-block max-w-full truncate rounded px-1.5 py-0.5 align-middle text-[0.6rem] font-medium border ${
+        isDefault
+          ? "bg-sky-500/10 text-sky-400 border-sky-500/20"
+          : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+      }`}
+    >
+      {mode}
+    </span>
+  );
+}
+
+function DurationDisplay({ ms }: { ms: number }) {
+  const color =
+    ms > 500
+      ? "text-red-400"
+      : ms > 100
+        ? "text-amber-400"
+        : "text-muted-foreground";
+  return <span className={`font-mono text-[0.7rem] ${color}`}>{formatDuration(ms)}</span>;
+}
+
+// -- Copy Button --
+
+function CopyButton({ text, field }: { text: string; field?: string }) {
+  const [copied, setCopied] = useState(false);
+  const { capture } = usePostHog();
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    capture("activity_copy_clicked", { field: field ?? "unknown" });
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+      title="Copy"
+    >
+      {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+    </button>
+  );
+}
+
+// -- Decision Pill Toggle --
+
+function DecisionPills({
+  value,
+  onChange,
+}: {
+  value: "" | "allow" | "deny" | "instruct";
+  onChange: (v: "" | "allow" | "deny" | "instruct") => void;
+}) {
+  const opts: { label: string; value: "" | "allow" | "deny" | "instruct" }[] = [
+    { label: "All", value: "" },
+    { label: "Allow", value: "allow" },
+    { label: "Instruct", value: "instruct" },
+    { label: "Deny", value: "deny" },
+  ];
+  return (
+    <div className="inline-flex items-center rounded-md border border-border bg-muted/30 p-0.5">
+      {opts.map((opt) => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          className={`px-2.5 py-1 text-[0.65rem] font-medium rounded transition-all ${
+            value === opt.value
+              ? opt.value === "deny"
+                ? "bg-red-500/15 text-red-400 shadow-sm"
+                : opt.value === "allow"
+                  ? "bg-emerald-500/15 text-emerald-400 shadow-sm"
+                  : opt.value === "instruct"
+                    ? "bg-amber-500/15 text-amber-400 shadow-sm"
+                    : "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// -- Stats Bar --
+
+function StatsBar({ stats }: { stats: HookActivityPayload["stats"] }) {
+  const denyRatePct = stats.totalEvents > 0 ? (stats.denyCount / stats.totalEvents) * 100 : 0;
+  const denyRateLabel = denyRatePct.toFixed(denyRatePct >= 10 ? 0 : 1);
+  // amber once >2%, pink once >5% \u2014 keeps the bar honest at a glance
+  const denyTone =
+    stats.denyCount === 0 ? "" : denyRatePct >= 5 ? " is-deny" : denyRatePct >= 2 ? " is-warn" : "";
+
+  return (
+    <div className="stat-bar" role="group" aria-label="Activity stats">
+      <div className="stat-cell">
+        <span className="eyebrow">total events</span>
+        <span className="value">{stats.totalEvents.toLocaleString()}</span>
+        <span className="meta">across all installed agents</span>
+      </div>
+      <div className="stat-cell">
+        <span className="eyebrow">deny rate</span>
+        <span className={`value${denyTone}`}>{denyRateLabel}%</span>
+        <span className="meta">{stats.denyCount.toLocaleString()} of {stats.totalEvents.toLocaleString()} denied</span>
+      </div>
+      <div className="stat-cell">
+        <span className="eyebrow">top policy</span>
+        <span
+          className="value"
+          style={{
+            fontSize: 16,
+            fontWeight: 500,
+            color: stats.topPolicy ? "var(--accent-pink)" : "var(--dim)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={stats.topPolicy ?? undefined}
+        >
+          {stats.topPolicy ?? "\u2014"}
+        </span>
+        <span className="meta">most-evaluated policy in scope</span>
+      </div>
+    </div>
+  );
+}
+
+// -- Expandable Detail Panel --
+
+
+/**
+ * "Your policy ran, but this event cannot block on this CLI."
+ *
+ * Renders ONLY when the (cli, event) pair is a verified `observe`. A pair we
+ * have not traced returns undefined from `enforcementFor` and this renders
+ * nothing — a hedge ("capability unverified") would still be a claim, and
+ * unverified claims are the failure this whole matrix exists to prevent.
+ *
+ * The deny case matters more than the allow case: the row already says
+ * "denied", the activity store recorded a deny, and telemetry counted one — so
+ * without this note the UI actively reports enforcement that did not happen.
+ */
+function EnforcementNote({
+  item,
+}: {
+  item: HookActivityPayload["entries"][number];
+}) {
+  const capability = enforcementFor(
+    item.integration as IntegrationType | undefined,
+    item.eventType,
+  );
+  if (capability !== "observe") return null;
+
+  const ran = item.matchedPolicies ?? [];
+  // Rows written before matchedPolicies existed have no list; naming no policy
+  // is better than implying none ran.
+  if (ran.length === 0) return null;
+
+  const cli = item.integration ? getCliLabel(item.integration as IntegrationType) : "This CLI";
+  const names = ran.map((n) => n.replace(/^(custom|\.failproofai-(project|user))\//, ""));
+  const label = names.length === 1 ? names[0] : `${names.length} policies`;
+  const denied = item.decision === "deny";
+
+  return (
+    <div className="sm:col-span-2 lg:col-span-3 mt-1 flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-2.5 py-2">
+      <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-amber-500/80 mt-0.5" aria-hidden="true" />
+      <p className="text-[0.7rem] leading-relaxed text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {denied ? "Not enforced." : "Ran, but cannot enforce here."}
+        </span>{" "}
+        <span className="font-mono">{label}</span> ran on{" "}
+        <span className="font-mono">{item.eventType}</span>, but {cli} discards hook
+        verdicts for this event
+        {denied ? " — the action went ahead anyway." : ", so a policy cannot block here."}{" "}
+        Move the check to an event {cli} enforces on, such as{" "}
+        <span className="font-mono">PreToolUse</span>.
+      </p>
+    </div>
+  );
+}
+
+function DetailPanel({
+  item,
+}: {
+  item: HookActivityPayload["entries"][number];
+}) {
+  return (
+    <tr>
+      <td colSpan={11} className="px-0 py-0">
+        <div className="activity-detail animate-expand text-xs">
+          <span className="activity-detail-eyebrow">
+            <span aria-hidden="true">{"\u25BE"}</span>
+            event detail
+          </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2">
+            <PausedNote item={item} />
+            <EnforcementNote item={item} />
+            {item.policySource && (
+              <div>
+                <span className="text-muted-foreground">Decided by: </span>
+                <span className="font-mono text-foreground">
+                  {item.policySource === "cloud" && item.cloudPolicyId
+                    ? `cloud · ${item.cloudPolicyId} version ${item.cloudVersion}`
+                    : item.policySource}
+                </span>
+              </div>
+            )}
+            {item.cloudDeployment !== undefined && (
+              <div>
+                {/* Present on every row of a managed machine, not just cloud
+                    decisions — it is what separates a rollout that changed no
+                    outcomes from one that never arrived. */}
+                <span className="text-muted-foreground">Cloud deployment: </span>
+                <span className="font-mono text-foreground">{item.cloudDeployment}</span>
+              </div>
+            )}
+            <div>
+              <span className="text-muted-foreground">Session ID: </span>
+              <span className="font-mono text-foreground">
+                {item.sessionId ?? "\u2014"}
+              </span>
+              {item.sessionId && <CopyButton text={item.sessionId} field="session_id" />}
+            </div>
+            <div>
+              <span className="text-muted-foreground">CWD: </span>
+              <span className="font-mono text-foreground">{item.cwd ?? "\u2014"}</span>
+              {item.cwd && <CopyButton text={item.cwd} field="cwd" />}
+            </div>
+            <div>
+              <span className="text-muted-foreground">Transcript: </span>
+              <span className="font-mono text-foreground break-all">
+                {item.transcriptPath ?? "\u2014"}
+              </span>
+              {item.transcriptPath?.startsWith("opencode-db://") && (
+                <span className="text-muted-foreground ml-1">(stored in opencode DB)</span>
+              )}
+            </div>
+          </div>
+          {item.policyNames && item.policyNames.length > 1 && (
+            <div style={{ marginTop: 8 }}>
+              <span className="text-muted-foreground">Policies: </span>
+              <span className="font-mono text-foreground">{item.policyNames.join(", ")}</span>
+            </div>
+          )}
+          {item.reason && (
+            <div style={{ marginTop: 8 }}>
+              <span className="text-muted-foreground">Full reason: </span>
+              <span className="text-foreground">{item.reason}</span>
+            </div>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// -- Activity Tab --
+
+function ActivityTab({
+  hooksInstalled,
+  onSwitchTab,
+}: {
+  hooksInstalled?: boolean;
+  onSwitchTab?: (tab: "activity" | "policies") => void;
+}) {
+  const { intervalSec } = useAutoRefresh();
+  const { capture } = usePostHog();
+  const url = useUrlParams();
+  const mountedRef = useRef(false);
+
+  const [page, setPage] = useState(() => paramToPage(url.get("page")));
+  const [data, setData] = useState<HookActivityPayload | null>(null);
+  const [activePauses, setActivePauses] = useState<ActivePause[]>([]);
+  const [expandedRow, setExpandedRow] = useState<number | null>(null);
+
+  const [filterDecision, setFilterDecision] = useState<"" | "allow" | "deny" | "instruct">(() => {
+    const v = url.get("decision");
+    return v === "allow" || v === "deny" || v === "instruct" ? v : "";
+  });
+  const [filterEventType, setFilterEventType] = useState(() => url.get("event") ?? "");
+  const [filterPolicy, setFilterPolicy] = useState(() => url.get("policy") ?? "");
+  const [filterSessionId, setFilterSessionId] = useState(() => url.get("session") ?? "");
+  const [filterCli, setFilterCli] = useState<"" | CliId>(() => {
+    const v = url.get("cli");
+    return isKnownCli(v) ? v : "";
+  });
+  const [filterSource, setFilterSource] = useState<"" | "custom" | "convention" | "cloud" | "pack">(() => {
+    const v = url.get("source");
+    return v === "custom" || v === "convention" || v === "cloud" || v === "pack" ? v : "";
+  });
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const filterTelemetryFirstRunRef = useRef(true);
+  const filtersRef = useRef({ filterDecision, filterEventType, filterPolicy, filterSessionId, filterCli, filterSource });
+  filtersRef.current = { filterDecision, filterEventType, filterPolicy, filterSessionId, filterCli, filterSource };
+
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
+    url.setAll({
+      decision: filterDecision || undefined,
+      event: filterEventType || undefined,
+      policy: filterPolicy || undefined,
+      session: filterSessionId || undefined,
+      cli: filterCli || undefined,
+      source: filterSource || undefined,
+      page: pageToParam(page),
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterDecision, filterEventType, filterPolicy, filterSessionId, filterCli, filterSource, page]);
+
+  const hasActiveFilters = filterDecision !== "" || filterEventType !== "" || filterPolicy !== "" || filterSessionId !== "" || filterCli !== "" || filterSource !== "";
+
+  const fetchData = useCallback(async (p: number) => {
+    try {
+      const { filterDecision: fd, filterEventType: fe, filterPolicy: fp, filterSessionId: fs, filterCli: fc, filterSource: fsrc } = filtersRef.current;
+      const active = fd !== "" || fe !== "" || fp !== "" || fs !== "" || fc !== "" || fsrc !== "";
+      let result: HookActivityPayload;
+      if (active) {
+        result = await searchHookActivityAction(
+          {
+            decision: fd || undefined,
+            eventType: fe || undefined,
+            policyName: fp || undefined,
+            sessionId: fs || undefined,
+            integration: fc || undefined,
+            source: fsrc || undefined,
+          },
+          p,
+        );
+      } else {
+        result = await getHookActivityAction(p);
+      }
+      setData(result);
+    } catch {
+      // Non-critical
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData(page);
+    const ms = intervalSec > 0 ? intervalSec * 1000 : 5000;
+    const id = setInterval(() => fetchData(page), ms);
+    return () => clearInterval(id);
+  }, [page, fetchData, intervalSec]);
+
+  // Pause state is polled independently of the activity page: it is live
+  // machine state, not a property of whichever rows are on screen, and it must
+  // keep updating while the user sits on page 3 of history.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      getActivePausesAction()
+        .then((p) => { if (!cancelled) setActivePauses(p); })
+        .catch(() => { /* non-critical: the banner simply stays hidden */ });
+    };
+    load();
+    const ms = intervalSec > 0 ? intervalSec * 1000 : 5000;
+    const id = setInterval(load, ms);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [intervalSec]);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setPage(1);
+      setExpandedRow(null);
+      fetchData(1);
+      // Skip the initial render — filters are initialized from URL params, not
+      // from a user action. Only fire on real user-driven changes.
+      if (filterTelemetryFirstRunRef.current) {
+        filterTelemetryFirstRunRef.current = false;
+        return;
+      }
+      capture("activity_filter_changed", {
+        active_filter_count:
+          (filterDecision !== "" ? 1 : 0) +
+          (filterEventType !== "" ? 1 : 0) +
+          (filterPolicy !== "" ? 1 : 0) +
+          (filterSessionId !== "" ? 1 : 0) +
+          (filterCli !== "" ? 1 : 0),
+        has_decision: filterDecision !== "",
+        has_event_type: filterEventType !== "",
+        has_policy: filterPolicy !== "",
+        has_session: filterSessionId !== "",
+        has_cli: filterCli !== "",
+        decision: filterDecision || null,
+        event_type: filterEventType || null,
+        cli: filterCli || null,
+      });
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterDecision, filterEventType, filterPolicy, filterSessionId, filterCli]);
+
+  const items = data?.entries ?? [];
+  const totalPages = data?.totalPages ?? 1;
+
+  const toggleRow = (idx: number) => {
+    setExpandedRow((prev) => {
+      const next = prev === idx ? null : idx;
+      const item = items[idx];
+      capture("activity_row_toggled", {
+        expanded: next !== null,
+        decision: item?.decision ?? null,
+        policy_name: item?.policyName ?? null,
+        event_type: item?.eventType ?? null,
+      });
+      return next;
+    });
+  };
+
+  return (
+    <>
+      {/* Above the stats, deliberately: a paused machine is the most important
+          thing on this screen, and the numbers below it are being produced with
+          local enforcement switched off. */}
+      <PausedBanner pauses={activePauses} />
+      {data?.stats && data.stats.totalEvents > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <StatsBar stats={data.stats} />
+        </div>
+      )}
+      <div>
+        {/* Filter console — elastic row that fills the container at every width */}
+        <div className="filter-bar">
+          <div className="filter-group">
+            <span className="filter-label">decision</span>
+            <DecisionPills value={filterDecision} onChange={setFilterDecision} />
+          </div>
+          <div className="filter-group">
+            <span className="filter-label">event</span>
+            <select
+              value={filterEventType}
+              onChange={(e) => setFilterEventType(e.target.value)}
+              className="filter-input"
+            >
+              <option value="">all events</option>
+              <option value="PreToolUse">PreToolUse</option>
+              <option value="PostToolUse">PostToolUse</option>
+              <option value="SessionStart">SessionStart</option>
+              <option value="SessionEnd">SessionEnd</option>
+              <option value="UserPromptSubmit">UserPromptSubmit</option>
+              <option value="PermissionRequest">PermissionRequest</option>
+            </select>
+          </div>
+          <div className="filter-group">
+            {/* "What did my organization's policies decide here?" is the
+                question cloud rollout reporting rests on, and it is
+                unanswerable while the source is only a prefix on a name. */}
+            <span className="filter-label">source</span>
+            <select
+              value={filterSource}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFilterSource(
+                  v === "custom" || v === "convention" || v === "cloud" || v === "pack" ? v : "",
+                );
+              }}
+              className="filter-input"
+              aria-label="Filter by policy source"
+            >
+              <option value="">all sources</option>
+              <option value="custom">custom</option>
+              <option value="convention">convention</option>
+              <option value="cloud">cloud</option>
+              <option value="pack">pack</option>
+            </select>
+          </div>
+          <div className="filter-group">
+            <span className="filter-label">cli</span>
+            <select
+              value={filterCli}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFilterCli(v === "" || isKnownCli(v) ? v : "");
+              }}
+              className="filter-input"
+              aria-label="Filter by CLI"
+            >
+              <option value="">all clis</option>
+              {KNOWN_CLI_IDS.map((id) => (
+                <option key={id} value={id}>
+                  {getCliLabel(id)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="filter-group filter-group--grow">
+            <span className="filter-label">policy</span>
+            <input
+              type="text"
+              value={filterPolicy}
+              onChange={(e) => setFilterPolicy(e.target.value)}
+              placeholder="filter by policy…"
+              className="filter-input"
+            />
+          </div>
+          <div className="filter-group filter-group--grow">
+            <span className="filter-label">session</span>
+            <input
+              type="text"
+              value={filterSessionId}
+              onChange={(e) => setFilterSessionId(e.target.value)}
+              placeholder="filter by session…"
+              className="filter-input"
+            />
+          </div>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              className="filter-clear"
+              onClick={() => {
+                setFilterDecision("");
+                setFilterEventType("");
+                setFilterCli("");
+                setFilterPolicy("");
+                setFilterSessionId("");
+                setFilterSource("");
+              }}
+              aria-label="Clear all filters"
+            >
+              [ clear ]
+            </button>
+          )}
+        </div>
+
+        {items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+            <Shield className="h-12 w-12 text-muted-foreground/30" />
+            {hooksInstalled === false ? (
+              <>
+                <p className="text-sm text-muted-foreground mt-4 font-medium">Policies are not installed</p>
+                <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                  Go to the{" "}
+                  <button
+                    className="underline hover:text-foreground transition-colors"
+                    onClick={() => onSwitchTab?.("policies")}
+                  >
+                    Policies tab
+                  </button>
+                  {" "}and click <span className="font-mono bg-muted px-1 rounded">Install</span> to enable policy monitoring.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground mt-4">
+                {hasActiveFilters
+                  ? "No matching activity."
+                  : "Waiting for hook events\u2026"}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="overflow-x-auto activity-table-wrap">
+            <table className="w-full text-xs activity-table" style={{ tableLayout: "fixed" }}>
+              {/* Column widths (table-layout: fixed). Order must match <thead>:
+                  chevron · time · decision · event · cli · tool · policy · reason · mode · duration · session.
+                  Badge columns (decision/event/cli/mode) must stay wide enough for their widest
+                  pill — mode holds "bypassPermissions", the longest badge text in the table. */}
+              <colgroup>
+                <col style={{ width: 32 }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "8%" }} />
+              </colgroup>
+              <thead className="activity-thead">
+                <tr>
+                  <th className="px-4 py-3" />
+                  <th className="px-3 py-3 activity-th">Time</th>
+                  <th className="px-3 py-3 activity-th">Decision</th>
+                  <th className="px-3 py-3 activity-th">Event</th>
+                  <th className="px-3 py-3 activity-th">CLI</th>
+                  <th className="px-3 py-3 activity-th">Tool</th>
+                  <th className="px-3 py-3 activity-th">Policy</th>
+                  <th className="px-3 py-3 activity-th">Reason</th>
+                  <th className="px-3 py-3 activity-th">Mode</th>
+                  <th className="px-3 py-3 activity-th">Duration</th>
+                  <th className="px-3 py-3 activity-th">Session</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/30">
+                {items.map((item, i) => {
+                  const isDeny = item.decision === "deny";
+                  const isExpanded = expandedRow === i;
+                  const isInstruct = item.decision === "instruct";
+                  return (
+                    <React.Fragment key={`${item.timestamp}-${i}`}>
+                      <tr
+                        onClick={() => toggleRow(i)}
+                        className={`activity-data-row cursor-pointer transition-colors ${
+                          isDeny
+                            ? "bg-red-500/[0.03] hover:bg-red-500/[0.07] border-l-2 border-l-red-500/40"
+                            : isInstruct
+                              ? "bg-amber-500/[0.03] hover:bg-amber-500/[0.07] border-l-2 border-l-amber-500/40"
+                              : i % 2 === 0
+                                ? "hover:bg-muted/30"
+                                : "bg-muted/[0.04] hover:bg-muted/30"
+                        } ${isExpanded ? "bg-muted/20" : ""}`}
+                      >
+                        <td className="px-4 py-2">
+                          <ChevronDown
+                            className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-150 ${
+                              isExpanded ? "rotate-0" : "-rotate-90"
+                            }`}
+                          />
+                        </td>
+                        <td
+                          className="px-3 py-2 text-muted-foreground whitespace-nowrap"
+                          title={formatAbsoluteTime(item.timestamp)}
+                        >
+                          {formatRelativeTime(item.timestamp)}
+                        </td>
+                        <td className="px-3 py-2">
+                          <DecisionBadge decision={item.decision} />
+                          {item.pausedBy && <PausedPill />}
+                        </td>
+                        <td className="px-3 py-2">
+                          <EventTypeBadge eventType={item.eventType} />
+                        </td>
+                        <td className="px-3 py-2">
+                          <IntegrationBadge integration={item.integration} />
+                        </td>
+                        <td className="px-3 py-2 font-mono text-foreground">
+                          {item.toolName ?? "\u2014"}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-foreground">
+                          {item.policyNames && item.policyNames.length > 1 ? (
+                            <span title={item.policyNames.join(", ")}>
+                              {item.policyNames[0]}
+                              <span className="text-muted-foreground text-[0.6rem]"> +{item.policyNames.length - 1}</span>
+                            </span>
+                          ) : (
+                            item.policyName ?? "\u2014"
+                          )}
+                        </td>
+                        <td
+                          className="px-3 py-2 text-muted-foreground truncate"
+                          title={item.reason ?? ""}
+                        >
+                          {item.reason ?? "\u2014"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {item.permissionMode ? (
+                            <ModeBadge mode={item.permissionMode} />
+                          ) : (
+                            "\u2014"
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          <DurationDisplay ms={item.durationMs} />
+                        </td>
+                        <td className="px-3 py-2" title={item.sessionId ?? ""}>
+                          <SessionCell
+                            sessionId={item.sessionId}
+                            transcriptPath={item.transcriptPath}
+                            integration={item.integration}
+                            cwd={item.cwd}
+                          />
+                        </td>
+                      </tr>
+                      {isExpanded && <DetailPanel item={item} />}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <PaginationControls
+          currentPage={page}
+          totalPages={totalPages}
+          onPageChange={(p) => {
+            capture("activity_pagination_changed", {
+              from_page: page,
+              to_page: p,
+              total_pages: totalPages,
+            });
+            setPage(p);
+            setExpandedRow(null);
+          }}
+        />
+      </div>
+    </>
+  );
+}
+
+// -- Policies Tab --
+
+function PolicyToggle({
+  enabled,
+  onChange,
+  disabled,
+}: {
+  enabled: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onChange}
+      disabled={disabled}
+      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:opacity-40 ${
+        enabled ? "bg-emerald-500" : "bg-muted-foreground/30"
+      }`}
+      aria-label={enabled ? "Disable policy" : "Enable policy"}
+    >
+      <span
+        className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${
+          enabled ? "translate-x-3.5" : "translate-x-0.5"
+        }`}
+      />
+    </button>
+  );
+}
+
+// -- Policy Config Modal --
+
+function PolicyConfigModal({
+  policy,
+  onClose,
+  onSave,
+}: {
+  policy: PolicyInfo;
+  onClose: () => void;
+  onSave: (params: Record<string, unknown>) => void;
+}) {
+  const params = policy.params ?? {};
+  const current = policy.currentParams ?? {};
+
+  // Initialize state for each param
+  const [values, setValues] = useState<Record<string, unknown>>(() => {
+    const init: Record<string, unknown> = {};
+    for (const [key, spec] of Object.entries(params)) {
+      const stored = key in current ? current[key] : spec.default;
+      init[key] = stored;
+    }
+    return init;
+  });
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const updateValue = (key: string, val: unknown) => {
+    setValues((prev) => ({ ...prev, [key]: val }));
+  };
+
+  const renderInput = (key: string, spec: { type: string; description: string; default: unknown }) => {
+    const val = values[key];
+
+    if (spec.type === "boolean") {
+      return (
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!val}
+            onChange={(e) => updateValue(key, e.target.checked)}
+            className="rounded border-border"
+          />
+          <span className="text-xs text-muted-foreground">{spec.description}</span>
+        </label>
+      );
+    }
+
+    if (spec.type === "number") {
+      return (
+        <input
+          type="number"
+          value={typeof val === "number" ? val : ""}
+          onChange={(e) => updateValue(key, Number(e.target.value))}
+          className="w-full h-7 rounded border border-border bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+        />
+      );
+    }
+
+    if (spec.type === "string[]") {
+      const lines = Array.isArray(val) ? (val as string[]).join("\n") : "";
+      return (
+        <textarea
+          value={lines}
+          onChange={(e) => updateValue(key, e.target.value.split("\n").filter((l) => l.trim() !== ""))}
+          rows={4}
+          placeholder={"One entry per line"}
+          className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs text-foreground font-mono focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
+        />
+      );
+    }
+
+    if (spec.type === "pattern[]") {
+      const patterns = Array.isArray(val) ? (val as { regex: string; label: string }[]) : [];
+      return (
+        <div className="space-y-1.5">
+          {patterns.map((p, i) => (
+            <div key={i} className="flex gap-1.5 items-center">
+              <input
+                type="text"
+                value={p.regex}
+                onChange={(e) => {
+                  const next = [...patterns];
+                  next[i] = { ...next[i], regex: e.target.value };
+                  updateValue(key, next);
+                }}
+                placeholder="regex"
+                className="flex-1 h-6 rounded border border-border bg-background px-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <input
+                type="text"
+                value={p.label}
+                onChange={(e) => {
+                  const next = [...patterns];
+                  next[i] = { ...next[i], label: e.target.value };
+                  updateValue(key, next);
+                }}
+                placeholder="label"
+                className="flex-1 h-6 rounded border border-border bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <button
+                onClick={() => updateValue(key, patterns.filter((_, j) => j !== i))}
+                className="text-muted-foreground/50 hover:text-destructive transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => updateValue(key, [...patterns, { regex: "", label: "" }])}
+            className="text-xs text-primary hover:underline"
+          >
+            + Add pattern
+          </button>
+        </div>
+      );
+    }
+
+    // Default: string
+    return (
+      <input
+        type="text"
+        value={typeof val === "string" ? val : ""}
+        onChange={(e) => updateValue(key, e.target.value)}
+        className="w-full h-7 rounded border border-border bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+      />
+    );
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div>
+            <p className="text-sm font-mono font-semibold text-foreground">{policy.name}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{policy.description}</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {/* Params */}
+        <div className="overflow-y-auto flex-1 px-4 py-4 space-y-4">
+          {Object.entries(params).map(([key, spec]) => (
+            <div key={key}>
+              <label className="block text-xs font-semibold text-foreground mb-1 font-mono">{key}</label>
+              <p className="text-[0.65rem] text-muted-foreground mb-1.5">{spec.description}</p>
+              {renderInput(key, spec)}
+            </div>
+          ))}
+        </div>
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border">
+          <Button variant="outline" size="sm" onClick={onClose} className="h-7 text-xs">
+            Cancel
+          </Button>
+          <Button size="sm" onClick={() => onSave(values)} className="h-7 text-xs">
+            Save
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatParamValue(type: string, value: unknown): string {
+  if (type === "string[]" || type === "pattern[]") {
+    const arr = Array.isArray(value) ? value : [];
+    if (arr.length === 0) return "none";
+    if (type === "pattern[]") return `${arr.length} pattern${arr.length !== 1 ? "s" : ""}`;
+    if (arr.length === 1) return String(arr[0]).slice(0, 24);
+    return `${arr.length} values`;
+  }
+  if (type === "boolean") return value ? "on" : "off";
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value).slice(0, 32);
+}
+
+function ErrorToast({
+  message,
+  onDismiss,
+  onInstall,
+  isPending,
+}: {
+  message: string;
+  onDismiss: () => void;
+  onInstall: () => void;
+  isPending: boolean;
+}) {
+  const { capture } = usePostHog();
+  return createPortal(
+    <div
+      className="fixed top-4 right-4 z-[9999] w-full max-w-sm"
+      style={{ animation: "slideInFromRight 0.25s ease-out" }}
+    >
+      <style>{`
+        @keyframes slideInFromRight {
+          from { transform: translateX(calc(100% + 1rem)); opacity: 0; }
+          to   { transform: translateX(0); opacity: 1; }
+        }
+      `}</style>
+      <div className="rounded-lg border border-red-500/40 bg-red-950/95 shadow-2xl shadow-red-900/40 overflow-hidden backdrop-blur-sm">
+        {/* Top accent bar */}
+        <div className="h-0.5 w-full bg-gradient-to-r from-red-600 via-red-400 to-red-600" />
+        <div className="p-4">
+          <div className="flex items-start gap-3">
+            {/* Error icon */}
+            <div className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 ring-2 ring-red-500/30">
+              <X className="h-3 w-3 text-white" strokeWidth={3} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[0.65rem] font-bold uppercase tracking-widest text-red-400 mb-0.5">
+                Error
+              </p>
+              <p className="text-sm text-red-100 leading-snug">{message}</p>
+            </div>
+            <button
+              onClick={onDismiss}
+              className="shrink-0 -mt-0.5 -mr-0.5 rounded p-0.5 text-red-400/60 transition-colors hover:bg-red-500/20 hover:text-red-200"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                capture("hooks_install_from_error_clicked", { error_message: message.slice(0, 200) });
+                onDismiss();
+                onInstall();
+              }}
+              disabled={isPending}
+              className="h-7 flex-1 border-0 bg-red-500 px-3 text-xs font-semibold text-white hover:bg-red-400 disabled:opacity-50"
+            >
+              Install hooks
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDismiss}
+              className="h-7 px-3 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-200"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function PoliciesTab({ onHooksInstallChange }: { onHooksInstallChange?: (installed: boolean) => void }) {
+  const [config, setConfig] = useState<HooksConfigPayload | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [hooksWarning, setHooksWarning] = useState<string | null>(null);
+  const [configuringPolicy, setConfiguringPolicy] = useState<PolicyInfo | null>(null);
+  const [checkedClis, setCheckedClis] = useState<Set<IntegrationType>>(() => new Set());
+  const cliCheckboxesInitializedRef = useRef(false);
+  const { capture } = usePostHog();
+
+  const fireActionError = useCallback(
+    (errorType: string, message: string) => {
+      capture("action_error_displayed", { error_type: errorType, error_message: message.slice(0, 200) });
+      setActionError(message);
+    },
+    [capture],
+  );
+
+  const reload = useCallback(async () => {
+    try {
+      const data = await getHooksConfigAction();
+      setConfig(data);
+      onHooksInstallChange?.(data.clis.some((c) => c.installed));
+    } catch {
+      // Non-critical
+    }
+  }, [onHooksInstallChange]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // Sync the checkbox set with payload. On first load only, pre-check
+  // detected-but-not-installed CLIs so a fresh user lands ready for one-click
+  // install. After that, sync strictly to `installed` so unchecking a still-
+  // detected CLI and clicking Apply doesn't re-tick the box on reload.
+  useEffect(() => {
+    if (!config) return;
+    if (!cliCheckboxesInitializedRef.current) {
+      cliCheckboxesInitializedRef.current = true;
+      setCheckedClis(new Set(config.clis.filter((c) => c.installed || c.detected).map((c) => c.id)));
+    } else {
+      setCheckedClis(new Set(config.clis.filter((c) => c.installed).map((c) => c.id)));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config?.clis]);
+
+  const installedCliSet = useMemo(
+    () => new Set((config?.clis ?? []).filter((c) => c.installed).map((c) => c.id)),
+    [config?.clis],
+  );
+
+  const pendingChanges = useMemo(() => {
+    const toInstall: IntegrationType[] = [];
+    const toRemove: IntegrationType[] = [];
+    for (const cli of config?.clis ?? []) {
+      const isChecked = checkedClis.has(cli.id);
+      if (isChecked && !installedCliSet.has(cli.id)) toInstall.push(cli.id);
+      if (!isChecked && installedCliSet.has(cli.id)) toRemove.push(cli.id);
+    }
+    return { toInstall, toRemove };
+  }, [config?.clis, checkedClis, installedCliSet]);
+
+  const hasPendingChanges = pendingChanges.toInstall.length > 0 || pendingChanges.toRemove.length > 0;
+
+  const toggleCli = (id: IntegrationType) => {
+    setCheckedClis((prev) => {
+      const next = new Set(prev);
+      const willCheck = !next.has(id);
+      if (willCheck) next.add(id);
+      else next.delete(id);
+      const cliInfo = config?.clis.find((c) => c.id === id);
+      capture("cli_selection_toggled", {
+        cli_id: id,
+        checked: willCheck,
+        current_state: cliInfo?.installed ? "installed" : cliInfo?.detected ? "detected" : "inactive",
+      });
+      return next;
+    });
+  };
+
+  /**
+   * Turn one policy on or off.
+   *
+   * Writes the PACK's selection, because that is what enforcement reads now.
+   * `togglePolicyAction` edits `enabledPolicies`, which stopped deciding
+   * anything the moment this build stopped registering builtins — leaving the
+   * toggle pointed there would have moved a switch that changes nothing.
+   */
+  const handleToggle = (policy: PolicyInfo, currentlyEnabled: boolean) => {
+    const name = policy.name;
+    if (!config) return;
+    const installed = config.clis.some((c) => c.installed);
+    if (!installed) {
+      setHooksWarning("Policies are not installed. Install policies to continue.");
+      return;
+    }
+    setHooksWarning(null);
+    // A policy name is unique only WITHIN a pack, so `config.policies` — the
+    // flat list across every installed pack — can hold two `block-sudo` rows.
+    // The write below targets (packId, name); matching the optimistic update on
+    // the name alone flipped the OTHER pack's row too, showing a change nothing
+    // persisted until the next reload silently undid it.
+    //
+    // Matched on the pair with no fallback to the name. `PolicyInfo.packId` is
+    // required — every policy comes from a pack — and `togglePackPolicyAction`
+    // takes a `string`, so a row without one is a type error at the call below,
+    // not a case to widen for here. A `packId === undefined ||` guard would only
+    // ever restore the conflation this line exists to remove.
+    // Optimistic update
+    setConfig((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        policies: prev.policies.map((p) =>
+          p.name === name && p.packId === policy.packId
+            ? { ...p, enabled: !currentlyEnabled }
+            : p,
+        ),
+        packs: prev.packs.map((pack) =>
+          pack.id === policy.packId
+            ? {
+                ...pack,
+                policies: pack.policies.map((p) =>
+                  p.name === name ? { ...p, enabled: !currentlyEnabled } : p,
+                ),
+              }
+            : pack,
+        ),
+      };
+    });
+    startTransition(async () => {
+      try {
+        // The RESULT, not just the absence of a throw. This action reports a
+        // missing pack, an unreadable manifest, or a policy an intervening pack
+        // update removed by RETURNING `{ ok: false, error }` — deliberately,
+        // because none of those is exceptional. Awaiting and discarding it left
+        // the optimistic row showing enforcement that was never written: the
+        // dashboard said a policy was on, and nothing was running it. Every
+        // reachable path there is a stale dashboard, which is the ordinary
+        // state of a tab somebody left open.
+        const result = await togglePackPolicyAction(policy.packId, name, !currentlyEnabled);
+        if (!result.ok) {
+          fireActionError("policy_toggle", result.error ?? "Failed to save policy change.");
+          reload();
+        }
+      } catch {
+        fireActionError("policy_toggle", "Failed to save policy change.");
+        reload();
+      }
+    });
+  };
+
+  const handleCustomToggle = (id: string, currentlyEnabled: boolean) => {
+    if (!config) return;
+    setConfig((prev) => prev ? {
+      ...prev,
+      customPolicies: prev.customPolicies?.map((p) => p.id === id ? { ...p, enabled: !currentlyEnabled } : p),
+      conventionPolicies: prev.conventionPolicies.map((entry) => ({
+        ...entry,
+        policies: entry.policies.map((p) => p.id === id ? { ...p, enabled: !currentlyEnabled } : p),
+      })),
+    } : prev);
+    startTransition(async () => {
+      try {
+        await toggleCustomPolicyAction(id, !currentlyEnabled);
+      } catch {
+        fireActionError("custom_policy_toggle", "Failed to save custom policy change.");
+        reload();
+      }
+    });
+  };
+
+  const handleApply = () => {
+    const { toInstall, toRemove } = pendingChanges;
+    if (toInstall.length === 0 && toRemove.length === 0) return;
+    capture("cli_install_remove_submitted", {
+      to_install: toInstall,
+      to_remove: toRemove,
+      count_install: toInstall.length,
+      count_remove: toRemove.length,
+    });
+    startTransition(async () => {
+      try {
+        setActionError(null);
+        if (toInstall.length > 0) await installHooksWebAction("user", toInstall);
+        if (toRemove.length > 0) await removeHooksWebAction("user", toRemove);
+      } catch (e) {
+        fireActionError("cli_apply", e instanceof Error ? e.message : "Failed to apply changes.");
+      } finally {
+        // Always resync so a partial-success batch (install OK, remove failed)
+        // doesn't leave the UI showing stale install state on the next click.
+        await reload();
+      }
+    });
+  };
+
+  const handleReinstall = () => {
+    // Reinstall acts on the intersection of checked × installed. Detected-but-
+    // not-installed CLIs are pre-checked as a one-click install hint, so a raw
+    // Array.from(checkedClis) would silently install brand-new CLIs from the
+    // Reinstall button. Use Apply for first-time installs.
+    const targets = Array.from(installedCliSet).filter((id) => checkedClis.has(id));
+    if (targets.length === 0) return;
+    capture("cli_reinstall_submitted", { cli_ids: targets, count: targets.length });
+    startTransition(async () => {
+      try {
+        setActionError(null);
+        await installHooksWebAction("user", targets);
+      } catch (e) {
+        fireActionError("cli_reinstall", e instanceof Error ? e.message : "Failed to reinstall.");
+      } finally {
+        await reload();
+      }
+    });
+  };
+
+  const handleSaveParams = (params: Record<string, unknown>) => {
+    if (!configuringPolicy) return;
+    // A PACK policy is saved under the stable pack-qualified key, because the
+    // bare name is not what the evaluator looks up — it registers pack policies
+    // as `pack/<id>@<version>/<name>`, so a bare key was written, displayed as
+    // saved, and ignored at runtime. Version-less on purpose: a key carrying
+    // the version would be orphaned by the publisher's next release.
+    const policyName = configuringPolicy.packId
+      ? packPolicyParamKey(configuringPolicy.packId, configuringPolicy.name)
+      : configuringPolicy.name;
+    setConfiguringPolicy(null);
+    startTransition(async () => {
+      try {
+        setActionError(null);
+        await updatePolicyParamsAction(policyName, params);
+        await reload();
+      } catch (e) {
+        fireActionError("param_update", e instanceof Error ? e.message : "Failed to save configuration.");
+      }
+    });
+  };
+
+  if (!config) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <span className="text-sm text-muted-foreground">Loading{"\u2026"}</span>
+      </div>
+    );
+  }
+
+  const installed = config.clis.some((c) => c.installed);
+  const installedCount = installedCliSet.size;
+  const checkedCount = checkedClis.size;
+
+  // Group policies by category
+  const categories = Array.from(new Set(config.policies.map((p) => p.category)));
+
+  return (
+    <>
+    {configuringPolicy && (
+      <PolicyConfigModal
+        policy={configuringPolicy}
+        onClose={() => {
+          capture("policy_config_modal_closed", { policy_name: configuringPolicy.name, action: "cancel" });
+          setConfiguringPolicy(null);
+        }}
+        onSave={handleSaveParams}
+      />
+    )}
+    <div className="bg-card border border-border rounded-lg overflow-hidden">
+      {/* CLI control panel — header */}
+      <div className="flex items-center justify-between gap-4 px-5 py-3.5 border-b border-border/60 bg-muted/10">
+        <div className="flex items-center gap-3 min-w-0 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-2 w-2 rounded-full transition-shadow ${
+                installed
+                  ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]"
+                  : "bg-muted-foreground/40"
+              }`}
+              aria-hidden
+            />
+            <span className="text-[0.65rem] uppercase tracking-[0.2em] font-mono text-foreground/90">
+              Integrations
+            </span>
+          </div>
+          <span className="text-[0.65rem] font-mono text-muted-foreground/40">·</span>
+          <div className="text-[0.65rem] uppercase tracking-[0.2em] font-mono text-muted-foreground">
+            <span className="text-foreground tabular-nums">
+              {installedCount.toString().padStart(2, "0")}
+            </span>
+            <span className="opacity-50"> / 0{config.clis.length} active</span>
+          </div>
+          {hasPendingChanges && (
+            <>
+              <span className="text-[0.65rem] font-mono text-muted-foreground/40">·</span>
+              <span className="inline-flex items-center gap-1.5 text-[0.65rem] uppercase tracking-[0.2em] font-mono text-pink-400">
+                <span className="h-1 w-1 rounded-full bg-pink-400 animate-pulse" />
+                {pendingChanges.toInstall.length + pendingChanges.toRemove.length} pending
+              </span>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleReinstall}
+            disabled={isPending || checkedCount === 0}
+            className="text-xs h-7 px-3 font-mono"
+          >
+            Reinstall
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleApply}
+            disabled={isPending || !hasPendingChanges}
+            className="text-xs h-7 px-3 font-mono"
+          >
+            Apply changes
+          </Button>
+        </div>
+      </div>
+
+      {/* CLI rows */}
+      <div className="divide-y divide-border/30 border-b border-border/60">
+        {config.clis.map((cli, i) => {
+          const isChecked = checkedClis.has(cli.id);
+          const isInstalled = installedCliSet.has(cli.id);
+          const willChange = isChecked !== isInstalled;
+          const badge = getCliBadgeClasses(cli.id);
+          const accentClass =
+            badge.split(" ").find((c) => c.startsWith("text-")) ?? "text-foreground";
+
+          return (
+            <label
+              key={cli.id}
+              className={`group relative flex items-center gap-3 pl-6 pr-5 py-3 cursor-pointer transition-colors hover:bg-muted/15 ${
+                willChange ? "bg-pink-500/[0.04]" : ""
+              }`}
+            >
+              {/* Brand-colored accent rail */}
+              <div
+                className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentClass} bg-current transition-opacity ${
+                  isChecked ? "opacity-100" : "opacity-25 group-hover:opacity-60"
+                }`}
+                aria-hidden
+              />
+
+              {/* Slot index — 01..07 */}
+              <div className="font-mono text-[0.65rem] text-muted-foreground/40 tabular-nums w-6 select-none">
+                {(i + 1).toString().padStart(2, "0")}
+              </div>
+
+              {/* Custom checkbox */}
+              <div className="relative shrink-0">
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={() => toggleCli(cli.id)}
+                  disabled={isPending}
+                  className="sr-only peer"
+                  aria-label={`Toggle ${cli.label}`}
+                />
+                <div
+                  className={`h-[18px] w-[18px] rounded-sm border transition-all peer-focus-visible:ring-2 peer-focus-visible:ring-primary/40 ${
+                    isChecked
+                      ? "bg-primary border-primary"
+                      : "bg-background/50 border-border group-hover:border-foreground/40"
+                  }`}
+                >
+                  {isChecked && (
+                    <svg
+                      viewBox="0 0 18 18"
+                      className="h-full w-full text-primary-foreground"
+                      fill="none"
+                      aria-hidden
+                    >
+                      <path
+                        d="M4 9.5L7.5 12.5L14 6"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </div>
+              </div>
+
+              {/* CLI label */}
+              <div className="min-w-[150px] shrink-0">
+                <div className="text-sm font-medium text-foreground">{cli.label}</div>
+              </div>
+
+              {/* Status + diff pills */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {isInstalled ? (
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-[0.6rem] uppercase tracking-[0.15em] font-mono border ${badge}`}
+                  >
+                    <span className="h-1 w-1 rounded-full bg-current shadow-[0_0_4px_currentColor]" />
+                    Active
+                  </span>
+                ) : cli.detected ? (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-[0.6rem] uppercase tracking-[0.15em] font-mono border border-border/60 text-muted-foreground/80 bg-muted/20">
+                    <span className="h-1 w-1 rounded-full bg-current opacity-60" />
+                    Detected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-[0.6rem] uppercase tracking-[0.15em] font-mono border border-border/30 text-muted-foreground/40">
+                    Inactive
+                  </span>
+                )}
+                {willChange && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-[0.6rem] uppercase tracking-[0.15em] font-mono border border-pink-500/40 text-pink-400 bg-pink-500/10">
+                    {isChecked ? "+ install" : "− remove"}
+                  </span>
+                )}
+              </div>
+
+              {/* Settings path — right-aligned, monospace */}
+              <div
+                className="ml-auto hidden lg:block text-[0.7rem] font-mono text-muted-foreground/50 truncate max-w-[420px] group-hover:text-muted-foreground/80 transition-colors"
+                title={cli.settingsPath}
+              >
+                {cli.settingsPath}
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      {/* Policy summary */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 bg-muted/5">
+        <span className="text-xs text-muted-foreground">
+          {/* What is actually ON, counted from the policies rendered below.
+              `enabledPolicies` is the old builtin switch list — it stopped
+              deciding anything when this build stopped registering builtins, so
+              counting it reported a number matching nothing on screen. */}
+          <span className="font-semibold text-foreground">
+            {config.policies.filter((p) => p.enabled).length +
+              (config.customPolicies?.filter((p) => p.enabled).length ?? 0) +
+              (config.conventionPolicies?.reduce(
+                (n, e) => n + e.policies.filter((p) => p.enabled).length,
+                0,
+              ) ?? 0)}
+          </span>
+          {" / "}
+          {config.policies.length + (config.customPolicies?.length ?? 0) + (config.conventionPolicies?.reduce((n, e) => n + e.policies.length, 0) ?? 0)}{" "}
+          policies enabled
+        </span>
+        {installed && (
+          <span className="text-[0.65rem] text-muted-foreground/60">
+            · shared across {installedCount} active CLI{installedCount === 1 ? "" : "s"}
+          </span>
+        )}
+      </div>
+
+      {actionError && (
+        <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-400">
+          {actionError}
+        </div>
+      )}
+      {hooksWarning && (
+        <ErrorToast
+          message={hooksWarning}
+          onDismiss={() => setHooksWarning(null)}
+          onInstall={handleApply}
+          isPending={isPending}
+        />
+      )}
+
+      {/* Policy categories */}
+      {categories.map((category) => {
+        const policies = config.policies.filter((p) => p.category === category);
+        const enabledCount = policies.filter((p) => p.enabled).length;
+        return (
+          <div key={category}>
+            {/* Category header */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border/50">
+              <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                {category}
+              </span>
+              <span className="text-[0.7rem] text-muted-foreground">
+                {enabledCount} / {policies.length} enabled
+              </span>
+            </div>
+            {/* Policy rows */}
+            {policies.map((policy) => (
+              // Keyed by pack AND name: two installed packs may each declare
+              // `block-sudo` in the same category, and a bare name key made
+              // them one React key — React warns and reuses the first row's
+              // state for the second.
+              <div
+                key={`${policy.packId}/${policy.name}`}
+                className="flex items-start gap-3 px-4 py-3 border-b border-border/20 hover:bg-muted/20 transition-colors"
+              >
+                <div className="mt-0.5 shrink-0">
+                  <PolicyToggle
+                    enabled={policy.enabled}
+                    onChange={() => handleToggle(policy, policy.enabled)}
+                    disabled={isPending}
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 min-w-0 w-56 shrink-0 mt-0.5">
+                  <span className="text-xs font-mono text-foreground truncate">{policy.name}</span>
+                  {policy.beta && (
+                    <span className="shrink-0 text-[0.6rem] px-1 py-0.5 rounded border bg-violet-500/10 text-violet-400 border-violet-500/20">
+                      beta
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs text-muted-foreground leading-relaxed">
+                    {policy.description}
+                  </span>
+                  {policy.eventScope && (
+                    <span className="block text-[0.65rem] text-muted-foreground/40 font-mono mt-0.5 hidden lg:block">
+                      {policy.eventScope}
+                    </span>
+                  )}
+                  {policy.params && Object.keys(policy.params).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {Object.entries(policy.params).map(([key, spec]) => {
+                        const currentVal = policy.currentParams?.[key] ?? spec.default;
+                        const isCustomized = JSON.stringify(currentVal) !== JSON.stringify(spec.default);
+                        return (
+                          <span
+                            key={key}
+                            className={`inline-flex items-center gap-1 font-mono text-[0.6rem] px-1.5 py-0.5 rounded border ${
+                              isCustomized
+                                ? "bg-primary/10 text-primary/70 border-primary/20"
+                                : "bg-muted/40 text-muted-foreground/55 border-border/40"
+                            }`}
+                          >
+                            <span className="opacity-70">{key}:</span>
+                            <span>{formatParamValue(spec.type, currentVal)}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                {policy.params && Object.keys(policy.params).length > 0 && (
+                  <button
+                    className="shrink-0 mt-0.5 text-muted-foreground hover:text-primary transition-colors"
+                    onClick={() => {
+                      const customizedCount = Object.entries(policy.params ?? {}).filter(([k, spec]) => {
+                        const currentVal = policy.currentParams?.[k] ?? spec.default;
+                        return JSON.stringify(currentVal) !== JSON.stringify(spec.default);
+                      }).length;
+                      capture("policy_config_modal_opened", {
+                        policy_name: policy.name,
+                        param_count: Object.keys(policy.params ?? {}).length,
+                        has_customized_params: customizedCount > 0,
+                        customized_count: customizedCount,
+                      });
+                      setConfiguringPolicy(policy);
+                    }}
+                    title="Edit parameters"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+
+      {/* Custom policies section */}
+      {(config.customPoliciesPaths?.length || config.customPoliciesPath) && (
+        <div>
+          {/* Section header — matches category header style */}
+          <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border/50">
+            <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Custom Policies
+            </span>
+            <span className="text-[0.7rem] text-muted-foreground">
+              {config.customPolicies?.length ?? 0} detected
+            </span>
+          </div>
+          {(config.customPoliciesPaths ?? [config.customPoliciesPath!]).map((path) => (
+            <div key={path} className="flex items-center gap-3 px-4 py-3 border-b border-border/20">
+              <Code className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-xs font-mono text-muted-foreground truncate">{path}</span>
+            </div>
+          ))}
+          {/* Reconfigure notice */}
+          <div className="flex items-start gap-2 px-4 py-2.5 border-b border-border/20 bg-muted/10">
+            <Shield className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0 mt-0.5" />
+            <p className="text-[0.7rem] text-muted-foreground/70 leading-relaxed">
+              Re-run the install command to add, remove, or reorder files.
+            </p>
+          </div>
+          {/* Rich policy rows — mirrors built-in layout without toggle */}
+          {config.customPolicies?.map((policy) => (
+            <div
+              key={policy.id}
+              className="flex items-start gap-3 px-4 py-3 border-b border-border/20 hover:bg-muted/20 transition-colors"
+            >
+              <div className="mt-0.5 shrink-0">
+                <PolicyToggle enabled={policy.enabled} onChange={() => handleCustomToggle(policy.id, policy.enabled)} disabled={isPending} />
+              </div>
+              <div className="flex items-center gap-1.5 min-w-0 w-56 shrink-0 mt-0.5">
+                <span className="text-xs font-mono text-foreground truncate">{policy.name}</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                {policy.description && (
+                  <span className="text-xs text-muted-foreground leading-relaxed">
+                    {policy.description}
+                  </span>
+                )}
+                {policy.eventScope && (
+                  <span className="block text-[0.65rem] text-muted-foreground/40 font-mono mt-0.5 hidden lg:block">
+                    {policy.eventScope}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Convention policies — discovered from .failproofai/policies/, never
+          from config, so they are grouped by the file that declares them. */}
+      {config.conventionPolicies?.map((entry) => (
+        <div key={entry.path}>
+          <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border/50">
+            <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+              Convention Policies — {entry.scope === "project" ? "Project" : "User"}
+            </span>
+            <span className="text-[0.7rem] text-muted-foreground">
+              {entry.policies.length} hook{entry.policies.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-border/20">
+            <Code className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs font-mono text-muted-foreground truncate">{entry.path}</span>
+          </div>
+          {entry.policies.length === 0 ? (
+            <div className="flex items-start gap-2 px-4 py-2.5 border-b border-border/20 bg-muted/10">
+              <Shield className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0 mt-0.5" />
+              <p className="text-[0.7rem] text-muted-foreground/70 leading-relaxed">
+                No policies could be read from this file. It is still loaded at runtime —
+                run <span className="font-mono">failproofai policies</span> to see what it registers.
+              </p>
+            </div>
+          ) : (
+            entry.policies.map((policy) => (
+              <div
+                key={`${entry.path}:${policy.name}`}
+                className="flex items-start gap-3 px-4 py-3 border-b border-border/20 hover:bg-muted/20 transition-colors"
+              >
+                <div className="mt-0.5 shrink-0">
+                  <PolicyToggle enabled={policy.enabled} onChange={() => handleCustomToggle(policy.id, policy.enabled)} disabled={isPending} />
+                </div>
+                <div className="flex items-center gap-1.5 min-w-0 w-56 shrink-0 mt-0.5">
+                  <span className="text-xs font-mono text-foreground truncate">{policy.name}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  {policy.description && (
+                    <span className="text-xs text-muted-foreground leading-relaxed">
+                      {policy.description}
+                    </span>
+                  )}
+                  {policy.eventScope && (
+                    <span className="block text-[0.65rem] text-muted-foreground/40 font-mono mt-0.5 hidden lg:block">
+                      {policy.eventScope}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      ))}
+
+      {/* Policy packs — sets of policies published as a GitHub release. Anyone
+          can publish one from their own repository, so this is the surface that
+          makes an installed pack visible and switchable without the CLI. */}
+      <PackSection
+        packs={config.packs ?? []}
+        disabled={isPending}
+        onChanged={reload}
+        onError={(message) => fireActionError("pack_action", message)}
+      />
+    </div>
+    </>
+  );
+}
+
+/** Install a pack, and manage the ones already installed. */
+function PackSection({
+  packs,
+  disabled,
+  onChanged,
+  onError,
+}: {
+  packs: InstalledPackInfo[];
+  disabled?: boolean;
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
+  const [source, setSource] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [installed, setInstalled] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PackPreviewResult | null>(null);
+  const { capture } = usePostHog();
+
+  // Reading a pack before installing it. Fetches the manifest only — the entry
+  // artifact is never downloaded, so looking at a stranger's pack cannot run a
+  // stranger's code inside this server.
+  const runPreview = async () => {
+    if (!source.trim()) return;
+    setBusy("preview");
+    setPreview(null);
+    try {
+      const result = await previewPackWebAction(source);
+      if (!result.ok) {
+        onError(result.error ?? "Could not read that pack.");
+        return;
+      }
+      setPreview(result);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const run = async (label: string, action: () => Promise<{ ok: boolean; id?: string; version?: string; error?: string }>) => {
+    setBusy(label);
+    setInstalled(null);
+    try {
+      const result = await action();
+      if (!result.ok) {
+        // The refusal's own words. Every one of them names what was wrong —
+        // a source that resolves to nothing, a digest that does not match, a
+        // manifest declaring a policy its artifact never registers.
+        onError(result.error ?? "Could not install that pack.");
+        return;
+      }
+      setInstalled(result.version ? `${result.id}@${result.version}` : (result.id ?? null));
+      setSource("");
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Could not install that pack.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border/50">
+        <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+          Policy Packs
+        </span>
+        <span className="text-[0.7rem] text-muted-foreground">
+          {packs.length === 0 ? "none installed" : `${packs.length} installed`}
+        </span>
+      </div>
+
+      {/* Install by name — any owner/repo on GitHub, not only ours. */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-border/20">
+        <input
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && source.trim() && !busy) {
+              capture("pack_install_submitted", { via: "input" });
+              void run("input", () => addPackWebAction(source));
+            }
+          }}
+          placeholder="core  ·  acme/ops  ·  acme/ops@v1.2.0  ·  a release URL"
+          spellCheck={false}
+          disabled={disabled || busy !== null}
+          className="flex-1 min-w-[16rem] rounded-md border border-border/60 bg-background px-2.5 py-1.5 text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+          aria-label="Pack source"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled || busy !== null || source.trim().length === 0}
+          onClick={() => {
+            capture("pack_preview_submitted", {});
+            void runPreview();
+          }}
+        >
+          {busy === "preview" ? "Reading…" : "Preview"}
+        </Button>
+        <Button
+          size="sm"
+          variant="default"
+          disabled={disabled || busy !== null || source.trim().length === 0}
+          onClick={() => {
+            capture("pack_install_submitted", { via: "button" });
+            void run("input", () => addPackWebAction(source));
+          }}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {busy === "input" ? "Installing…" : "Install"}
+        </Button>
+      </div>
+
+      {/* What the pack CONTAINS, read from its manifest before anything is
+          installed. Marks are the publisher's defaults, not this machine's
+          state — nothing is installed, so an "on" would describe no machine. */}
+      {preview?.ok && (
+        <div className="border-b border-border/20 bg-muted/5">
+          <div className="flex items-center gap-3 px-4 py-2.5">
+            <Package className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs font-mono text-foreground">
+              {preview.id}@{preview.version}
+            </span>
+            <span className="text-[0.7rem] text-muted-foreground">
+              {preview.policies?.length ?? 0} policies ·{" "}
+              {preview.policies?.filter((p) => p.defaultEnabled).length ?? 0} on by default
+            </span>
+            {preview.effect === "observe" && (
+              <span className="text-[0.65rem] uppercase tracking-wider text-amber-500">
+                observes only
+              </span>
+            )}
+            <button
+              onClick={() => setPreview(null)}
+              className="ml-auto text-muted-foreground/60 hover:text-foreground"
+              aria-label="Close preview"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {preview.policies?.map((policy) => (
+              <div key={policy.name} className="flex items-start gap-3 px-4 py-2 border-t border-border/10">
+                <span
+                  className={`text-[0.65rem] uppercase tracking-wider w-14 shrink-0 mt-0.5 ${
+                    policy.defaultEnabled ? "text-emerald-500" : "text-muted-foreground/50"
+                  }`}
+                >
+                  {policy.defaultEnabled ? "default" : "opt-in"}
+                </span>
+                <span className="text-xs font-mono text-foreground w-56 shrink-0 truncate">
+                  {policy.name}
+                </span>
+                <span className="text-xs text-muted-foreground leading-relaxed min-w-0">
+                  {policy.description}
+                  <span className="block text-[0.65rem] text-muted-foreground/40 font-mono mt-0.5">
+                    {policy.category}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="px-4 py-2.5 border-t border-border/20">
+            <Button
+              size="sm"
+              variant="default"
+              disabled={disabled || busy !== null}
+              onClick={() => {
+                capture("pack_install_submitted", { via: "preview" });
+                void run("input", () => addPackWebAction(source)).then(() => setPreview(null));
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Install its defaults
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Ours, in one click — both the released pack and the copy that ships
+          inside this package, which needs no network at all. */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-border/20 bg-muted/10">
+        <span className="text-[0.7rem] text-muted-foreground/70 mr-1">Failproof AI policies:</span>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled || busy !== null}
+          onClick={() => {
+            capture("pack_install_submitted", { via: "ours" });
+            void run("ours", () => addPackWebAction("FailproofAI/policies"));
+          }}
+        >
+          {busy === "ours" ? "Installing…" : "Install from GitHub"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled || busy !== null}
+          onClick={() => {
+            capture("pack_install_submitted", { via: "bundled" });
+            void run("bundled", () => addBundledPackWebAction());
+          }}
+        >
+          {busy === "bundled" ? "Installing…" : "Install offline copy"}
+        </Button>
+        {installed && (
+          <span className="text-[0.7rem] text-emerald-500 font-mono">installed {installed}</span>
+        )}
+      </div>
+
+      {packs.map((pack) => (
+        <div key={`${pack.id}@${pack.version}`}>
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-border/20">
+            <Package className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs font-mono text-foreground truncate">
+              {pack.id}{pack.version ? `@${pack.version}` : ""}
+            </span>
+            {pack.effect === "observe" && (
+              <span className="text-[0.65rem] uppercase tracking-wider text-amber-500">observing</span>
+            )}
+            <span className="text-[0.65rem] text-muted-foreground/50 font-mono truncate hidden lg:inline">
+              {pack.source}
+            </span>
+            <button
+              onClick={() => void run(pack.id, () => removePackWebAction(pack.id))}
+              disabled={disabled || busy !== null}
+              className="ml-auto text-muted-foreground/60 hover:text-foreground disabled:opacity-40"
+              aria-label={`Remove ${pack.id}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {pack.error ? (
+            // A pack that will not load is what the machine denies for. Saying
+            // it here is the difference between a fixable problem and a
+            // mysterious one.
+            <div className="flex items-start gap-2 px-4 py-2.5 border-b border-border/20 bg-amber-500/5">
+              <TriangleAlert className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-[0.7rem] text-muted-foreground leading-relaxed">
+                This pack will not load: {pack.error}
+              </p>
+            </div>
+          ) : (
+            // NOT a second list of the pack's policies. Every policy that
+            // enforces here is in the categorised list above, whichever pack it
+            // came from — rendering them again under the pack made the same
+            // toggles appear twice, the second time with no category.
+            <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border/20">
+              <span className="text-[0.7rem] text-muted-foreground">
+                {pack.policies.filter((p) => p.enabled).length} of {pack.policies.length} on —
+                listed by category above
+              </span>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// -- Tab Bar --
+
+function TabBar({
+  activeTab,
+  onChange,
+}: {
+  activeTab: "activity" | "policies";
+  onChange: (tab: "activity" | "policies") => void;
+}) {
+  const tabs: { id: "activity" | "policies"; label: string }[] = [
+    { id: "activity", label: "Activity" },
+    { id: "policies", label: "Configure" },
+  ];
+  return (
+    <div className="tabs" style={{ padding: 0, marginBottom: 24 }}>
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          onClick={() => onChange(tab.id)}
+          className={`tab${activeTab === tab.id ? " is-active" : ""}`}
+        >
+          {tab.label.toLowerCase()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// -- Main Component --
+
+export default function HooksClient({ initialTab = "activity" }: { initialTab?: "activity" | "policies" }) {
+  const url = useUrlParams();
+  const { capture } = usePostHog();
+  const [activeTab, setActiveTab] = useState<"activity" | "policies">(initialTab);
+  const [hooksInstalled, setHooksInstalled] = useState<boolean | undefined>(undefined);
+  const [policyCounts, setPolicyCounts] = useState<{ enabled: number; total: number } | null>(null);
+  const [installedCliLabels, setInstalledCliLabels] = useState<string[]>([]);
+
+  useEffect(() => {
+    getHooksConfigAction()
+      .then((cfg) => {
+        setHooksInstalled(cfg.clis.some((c) => c.installed));
+        setPolicyCounts({
+          enabled: cfg.enabledPolicies.length,
+          total:
+            cfg.policies.length +
+            (cfg.customPolicies?.length ?? 0) +
+            (cfg.conventionPolicies?.reduce((n, e) => n + e.policies.length, 0) ?? 0),
+        });
+        setInstalledCliLabels(cfg.clis.filter((c) => c.installed).map((c) => c.label));
+      })
+      .catch(() => setHooksInstalled(undefined));
+  }, []);
+
+  const evaluationsHeading = installedCliLabels.length === 0
+    ? "Policy evaluations"
+    : installedCliLabels.length <= 3
+      ? `Policy evaluations across ${installedCliLabels.join(", ")}`
+      : `Policy evaluations across ${installedCliLabels.length} agents`;
+
+  const handleTabChange = (tab: "activity" | "policies") => {
+    if (tab !== activeTab) {
+      capture("policies_tab_switched", { tab, from_tab: activeTab });
+    }
+    setActiveTab(tab);
+    url.setAll({ tab: tab === "activity" ? undefined : tab });
+  };
+
+  return (
+    <main className="report">
+      <section className="section" data-screen-label="policies">
+        <h2
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 24,
+            fontWeight: 600,
+            letterSpacing: "-0.01em",
+            color: "var(--ink)",
+            margin: "0 0 16px",
+          }}
+        >
+          {activeTab === "activity" ? "Policies" : "Configure Policies"}
+        </h2>
+        {activeTab === "activity" ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 32,
+              flexWrap: "wrap",
+              margin: "0 0 24px",
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 14,
+                color: "var(--ink-2)",
+                lineHeight: 1.7,
+                flex: "1 1 480px",
+                minWidth: 0,
+              }}
+            >
+              {evaluationsHeading}
+              {policyCounts && (
+                <span style={{ color: "var(--dim)" }}>
+                  {" · "}enabled policies{" "}
+                  <span style={{ color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
+                    {policyCounts.enabled}/{policyCounts.total}
+                  </span>
+                </span>
+              )}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                gap: 6,
+                flex: "0 0 auto",
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  letterSpacing: "0.22em",
+                  textTransform: "uppercase",
+                  color: "var(--dim)",
+                }}
+              >
+                want to change which policies fire?
+              </span>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => handleTabChange("policies")}
+              >
+                [ configure policies → ]
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 14,
+              color: "var(--ink-2)",
+              lineHeight: 1.7,
+              maxWidth: 720,
+              margin: "0 0 24px",
+            }}
+          >
+            switch policies on or off across your installed harnesses.
+          </p>
+        )}
+
+        <TabBar activeTab={activeTab} onChange={handleTabChange} />
+
+        {activeTab === "activity" ? (
+          <ActivityTab hooksInstalled={hooksInstalled} onSwitchTab={handleTabChange} />
+        ) : (
+          <PoliciesTab onHooksInstallChange={setHooksInstalled} />
+        )}
+      </section>
+    </main>
+  );
+}

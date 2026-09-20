@@ -1,0 +1,57 @@
+---
+title: "Failproof AI"
+description: "FailproofAI gibt KI-Agenten 39 integrierte Fehlerrichtlinien, die Schleifen, Secret-Leaks, destruktive Tool-Aufrufe und mehr mit einer einzigen Installation abfangen."
+---
+
+[![npm weekly downloads](https://img.shields.io/npm/dw/failproofai?style=flat-square&color=2ea44f)](https://www.npmjs.com/package/failproofai)
+
+Hooks und Richtlinien für **KI-Fehlerbehandlung**, **Fehlerwiederherstellung** und **LLM-Zuverlässigkeit**. Halten Sie Ihre KI-Agenten zuverlässig und autonom am Laufen – für **Claude Code**, **OpenAI Codex**, **GitHub Copilot**, **Cursor Agent**, **OpenCode**, **Pi**, **Hermes**, **OpenClaw**, **Factory Droid**, **Devin CLI**, **Antigravity CLI** und das **Agents SDK**.
+
+KI-Agenten scheitern auf vorhersehbare Weise. Sie führen destruktive Befehle aus, leaken Secrets, driften vom Kurs ab, stecken in Schleifen fest oder pushen direkt auf main. Werden diese Fehler nicht abgefangen, können kleine Probleme zu Ausfällen, geleakten Zugangsdaten und verlorener Arbeit eskalieren.
+
+FailproofAI löst das mit **Richtlinien**. Diese Regeln greifen in jeden Agent-Tool-Aufruf ein, um **Fehler zu erkennen**, **sie zu beheben** (blockieren, anweisen, bereinigen) und **Sie zu benachrichtigen**, wenn etwas Aufmerksamkeit erfordert. Ein lokales Dashboard ermöglicht es Ihnen, anschließend jeden Tool-Aufruf, jeden Agentenfehler und jede Wiederherstellungsaktion nachzuvollziehen.
+
+Transkripte und Richtlinienauswertungen verbleiben auf Ihrem Rechner. Daten werden nur übertragen, wenn Sie explizit eine Online-Funktion nutzen, z. B. authentifizierte Audit-Erinnerungen oder Einladungen.
+
+## Erste Schritte
+
+<CardGroup cols={2}>
+
+<Card title="39 integrierte Richtlinien" icon="shield" href="/de/built-in-policies">
+  Destruktive Befehle blockieren, Secret-Leaks verhindern, Agenten innerhalb der Projektgrenzen halten und vieles mehr. Alles sofort einsatzbereit.
+</Card>
+
+<Card title="Benutzerdefinierte Richtlinien" icon="code" href="/de/custom-policies">
+  Schreiben Sie eigene Regeln in JavaScript mit einer einfachen allow / deny / instruct API.
+</Card>
+
+<Card title="Agenten-Monitor" icon="chart-line" href="/de/dashboard">
+  Sehen Sie, was Ihre Agenten in Ihrer Abwesenheit getan haben. Sitzungen durchsuchen, Tool-Aufrufe prüfen, nachverfolgen, wo Richtlinien ausgelöst wurden.
+</Card>
+
+<Card title="Einfache Konfiguration" icon="gear" href="/de/configuration">
+  Jede Richtlinie ohne Code anpassen. Allowlists, geschützte Branches oder Schwellenwerte pro Projekt oder global festlegen.
+</Card>
+
+</CardGroup>
+
+## Schnellstart
+
+<CodeGroup>
+
+```bash npm
+npm install -g failproofai
+```
+
+```bash bun
+bun add -g failproofai
+```
+
+</CodeGroup>
+
+```bash
+failproofai policies --install   # enable policies (or skip — `failproofai` will offer to set them up on first run)
+failproofai                      # launch the dashboard
+```
+
+Die vollständige Anleitung finden Sie im [Erste-Schritte-Leitfaden](/de/getting-started).

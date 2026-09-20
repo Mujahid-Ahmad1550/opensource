@@ -1,0 +1,307 @@
+---
+title: أمثلة
+description: "كيفية إعداد hooks لـ Claude Code و Agents SDK"
+icon: book-open
+---
+
+أمثلة جاهزة للاستخدام لسيناريوهات شائعة. كل واحد يوضح كيفية التثبيت وما يمكن توقعه.
+
+---
+
+## إعداد hooks لـ Claude Code
+
+يتكامل Failproof AI مع Claude Code عبر [نظام hooks الخاص به](https://docs.anthropic.com/en/docs/claude-code/hooks). عند تشغيل `failproofai policies --install`، يسجل أوامر hook في ملف `settings.json` الخاص بـ Claude Code التي تعمل عند كل استدعاء أداة.
+
+<Steps>
+  <Step title="تثبيت failproofai">
+    ```bash
+    npm install -g failproofai
+    ```
+  </Step>
+  <Step title="تفعيل جميع السياسات المدمجة">
+    ```bash
+    failproofai policies --install
+    ```
+  </Step>
+  <Step title="التحقق من تسجيل hooks">
+    ```bash
+    cat ~/.claude/settings.json | grep failproofai
+    ```
+
+    يجب أن ترى إدخالات hook لأحداث `PreToolUse` و `PostToolUse` و `Notification` و `Stop`.
+  </Step>
+  <Step title="تشغيل Claude Code">
+    ```bash
+    claude
+    ```
+
+    تعمل السياسات تلقائياً عند كل استدعاء أداة. حاول طلب من Claude تشغيل `sudo rm -rf /` - سيتم حظره.
+  </Step>
+</Steps>
+
+---
+
+## إعداد hooks لـ Agents SDK
+
+إذا كنت تبني باستخدام [Agents SDK](https://docs.anthropic.com/en/docs/agents-sdk)، يمكنك استخدام نفس نظام hooks برمجياً.
+
+<Steps>
+  <Step title="تثبيت failproofai في مشروعك">
+    ```bash
+    npm install failproofai
+    ```
+  </Step>
+  <Step title="تكوين hooks في وكيلك">
+    مرر أوامر hook عند إنشاء عملية الوكيل الخاص بك. تعمل hooks بنفس الطريقة كما في Claude Code - عبر JSON في stdin/stdout:
+
+    ```bash
+    failproofai --hook PreToolUse   # يُستدعى قبل كل أداة
+    failproofai --hook PostToolUse  # يُستدعى بعد كل أداة
+    ```
+  </Step>
+  <Step title="اكتب سياسة مخصصة لوكيلك">
+    ```javascript
+    import { customPolicies, allow, deny } from "failproofai";
+
+    customPolicies.add({
+      name: "limit-to-project-dir",
+      description: "Keep the agent inside the project directory",
+      match: { events: ["PreToolUse"] },
+      fn: async (ctx) => {
+        const path = String(ctx.toolInput?.file_path ?? "");
+        if (path.startsWith("/") && !path.startsWith(ctx.session?.cwd ?? "")) {
+          return deny("Agent is restricted to the project directory");
+        }
+        return allow();
+      },
+    });
+    ```
+  </Step>
+  <Step title="تثبيت السياسة المخصصة">
+    ```bash
+    failproofai policies --install --custom ./my-agent-policies.js
+    ```
+  </Step>
+</Steps>
+
+---
+
+## حظر الأوامر المدمرة
+
+الإعداد الأكثر شيوعاً - منع الوكلاء من إلحاق الضرر الذي لا يمكن التراجع عنه.
+
+```bash
+failproofai policies --install block-sudo block-rm-rf block-force-push block-curl-pipe-sh
+```
+
+ما تفعله:
+- `block-sudo` - يحظر جميع أوامر `sudo`
+- `block-rm-rf` - يحظر حذف الملفات العودية
+- `block-force-push` - يحظر `git push --force`
+- `block-curl-pipe-sh` - يحظر نقل البرامج النصية البعيدة إلى shell
+
+---
+
+## منع تسريب الأسرار
+
+منع الوكلاء من رؤية أو تسريب بيانات الاعتماد في مخرجات الأداة.
+
+```bash
+failproofai policies --install sanitize-api-keys sanitize-jwt sanitize-connection-strings sanitize-bearer-tokens
+```
+
+تعمل هذه على `PostToolUse` - بعد تشغيل أداة، تنظف المخرجات قبل أن يراها الوكيل.
+
+---
+
+## احصل على تنبيهات Slack عندما يحتاج الوكلاء إلى الانتباه
+
+استخدم notification hook لإعادة توجيه تنبيهات الخمول إلى Slack.
+
+```javascript
+import { customPolicies, allow, instruct } from "failproofai";
+
+customPolicies.add({
+  name: "slack-on-idle",
+  description: "Alert Slack when the agent is waiting for input",
+  match: { events: ["Notification"] },
+  fn: async (ctx) => {
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (!webhookUrl) return allow();
+
+    const message = String(ctx.payload?.message ?? "Agent is waiting");
+    const project = ctx.session?.cwd ?? "unknown";
+
+    try {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: `*${message}*\nProject: \`${project}\``,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      // never block the agent if Slack is unreachable
+    }
+
+    return allow();
+  },
+});
+```
+
+ثبتها:
+
+```bash
+SLACK_WEBHOOK_URL=https://hooks.slack.com/... failproofai policies --install --custom ./slack-alerts.js
+```
+
+---
+
+## اجعل الوكلاء على فرع واحد
+
+منع الوكلاء من تبديل الفروع أو الدفع إلى الفروع المحمية.
+
+```javascript
+import { customPolicies, allow, deny } from "failproofai";
+
+customPolicies.add({
+  name: "stay-on-branch",
+  description: "Prevent the agent from checking out other branches",
+  match: { events: ["PreToolUse"] },
+  fn: async (ctx) => {
+    if (ctx.toolName !== "Bash") return allow();
+    const cmd = String(ctx.toolInput?.command ?? "");
+    if (/git\s+checkout\s+(?!-b)/.test(cmd)) {
+      return deny("Stay on the current branch. Create a new branch with -b if needed.");
+    }
+    return allow();
+  },
+});
+```
+
+---
+
+## طلب الاختبارات قبل الالتزام
+
+ذكّر الوكلاء بتشغيل الاختبارات قبل الالتزام.
+
+```javascript
+import { customPolicies, allow, instruct } from "failproofai";
+
+customPolicies.add({
+  name: "test-before-commit",
+  description: "Remind the agent to run tests before committing",
+  match: { events: ["PreToolUse"] },
+  fn: async (ctx) => {
+    if (ctx.toolName !== "Bash") return allow();
+    const cmd = String(ctx.toolInput?.command ?? "");
+    if (/git\s+commit/.test(cmd)) {
+      return instruct("Run tests before committing. Use `npm test` or `bun test` first.");
+    }
+    return allow();
+  },
+});
+```
+
+---
+
+## قفل مستودع الإنتاج
+
+التزم بتكوين على مستوى المشروع بحيث يحصل كل مطور في فريقك على نفس السياسات.
+
+أنشئ `.failproofai/policies-config.json` في مستودعك:
+
+```json
+{
+  "enabledPolicies": [
+    "block-sudo",
+    "block-rm-rf",
+    "block-force-push",
+    "block-push-master",
+    "block-env-files",
+    "sanitize-api-keys",
+    "sanitize-jwt"
+  ],
+  "policyParams": {
+    "block-push-master": {
+      "protectedBranches": ["main", "release", "production"]
+    }
+  }
+}
+```
+
+ثم التزم بها:
+
+```bash
+git add .failproofai/policies-config.json
+git commit -m "Add failproofai team policies"
+```
+
+كل عضو في الفريق لديه failproofai مثبت سيختار هذه القواعد تلقائياً.
+
+---
+
+## بناء معيار جودة على مستوى المنظمة باستخدام سياسات الاتفاقية
+
+الإعداد الأكثر تأثيراً: التزم بـ `.failproofai/policies/` في مستودعك مع سياسات مصممة لمشروعك. يحصل كل عضو في الفريق عليها تلقائياً — بدون أوامر تثبيت، بدون تغييرات في الإعدادات.
+
+<Steps>
+  <Step title="أنشئ الدليل وأضف السياسات">
+    ```bash
+    mkdir -p .failproofai/policies
+    ```
+
+    ```js
+    // .failproofai/policies/team-policies.mjs
+    import { customPolicies, allow, deny, instruct } from "failproofai";
+
+    // Enforce your team's preferred package manager
+    // (or enable the built-in prefer-package-manager policy instead)
+    customPolicies.add({
+      name: "enforce-bun",
+      match: { events: ["PreToolUse"] },
+      fn: async (ctx) => {
+        if (ctx.toolName !== "Bash") return allow();
+        const cmd = String(ctx.toolInput?.command ?? "");
+        if (/\bnpm\b/.test(cmd)) return deny("Use bun instead of npm.");
+        return allow();
+      },
+    });
+
+    // Remind the agent to run tests before committing
+    customPolicies.add({
+      name: "test-before-commit",
+      match: { events: ["PreToolUse"] },
+      fn: async (ctx) => {
+        if (ctx.toolName !== "Bash") return allow();
+        if (/git\s+commit/.test(ctx.toolInput?.command ?? "")) {
+          return instruct("Run tests before committing.");
+        }
+        return allow();
+      },
+    });
+    ```
+  </Step>
+  <Step title="التزم بـ git">
+    ```bash
+    git add .failproofai/policies/
+    git commit -m "Add team quality policies"
+    ```
+  </Step>
+  <Step title="استمر في التحسن">
+    عندما يواجه فريقك أنماط فشل جديدة، أضف سياسات وادفع. يحصل الجميع على التحديث في `git pull` التالي. تصبح هذه السياسات معيار جودة حي ينمو مع فريقك.
+  </Step>
+</Steps>
+
+---
+
+## أمثلة أخرى
+
+يحتوي دليل [`examples/`](https://github.com/failproofai/failproofai/tree/main/examples) في المستودع على:
+
+| الملف | ما يظهره |
+|------|----------|
+| `policies-basic.js` | سياسات البدء - حظر كتابات الإنتاج والدفع القسري والبرامج النصية الموجهة |
+| `policies-notification.js` | تنبيهات Slack لإخطارات الخمول ونهاية الجلسة |
+| `policies-advanced/index.js` | الاستيرادات الانتقالية والخطافات غير المتزامنة وتنظيف مخرجات PostToolUse ومعالجة حدث Stop |

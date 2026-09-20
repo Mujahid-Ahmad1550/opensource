@@ -1,0 +1,83 @@
+---
+---
+title: Package Aliases
+description: "पंजीकृत typosquat-prevention aliases और वे कैसे काम करती हैं"
+icon: copy
+---
+
+## Official package
+
+Canonical npm package **`failproofai`** है:
+
+```bash
+npm install -g failproofai
+# या
+bun add -g failproofai
+```
+
+---
+
+## हम alias names का स्वामित्व क्यों रखते हैं
+
+Typosquatting एक आम supply-chain attack है जहाँ एक malicious actor एक package name को register करता है जो एक लोकप्रिय package से एक keystroke दूर होता है। जो उपयोगकर्ता install command को गलत तरीके से type करते हैं, वे attacker-controlled code चलाते हैं जिसके पास पूर्ण system access होता है - बिल्कुल वही threat जिससे Failproof AI की रक्षा करने के लिए डिज़ाइन किया गया है।
+
+इस surface को खत्म करने के लिए, **हम `failproofai` के सभी common misspellings और formatting variants को npm पर पहले से ही अपने कब्जे में करते हैं**। इनमें से कोई भी नाम किसी third party द्वारा register नहीं किया जा सकता। प्रत्येक एक thin proxy है जो real `failproofai` package को install करता है और सौंपता है।
+
+---
+
+## Registered aliases
+
+**Formatting variants** - "failproof ai" लिखने के विभिन्न तरीके:
+
+| Package | Status |
+|---------|--------|
+| `failproof` | ✅ Published |
+| `failproof-ai` | ⏳ npm support के लिए लंबित |
+| `fail-proof-ai` | ⏳ npm support के लिए लंबित |
+| `failproof_ai` | ⏳ npm support के लिए लंबित |
+| `fail_proof_ai` | ⏳ npm support के लिए लंबित |
+| `fail-proofai` | ⏳ npm support के लिए लंबित |
+
+**`failprof*` typos** - "proof" से एक `o` गायब:
+
+| Package | Status |
+|---------|--------|
+| `failprof` | ✅ Published |
+| `failprof-ai` | ✅ Published |
+| `failprofai` | ⏳ npm support के लिए लंबित |
+| `fail-prof-ai` | ⏳ npm support के लिए लंबित |
+| `failprof_ai` | ⏳ npm support के लिए लंबित |
+
+**`faliproof*` typos** - transposed `a` और `i`:
+
+| Package | Status |
+|---------|--------|
+| `faliproof` | ✅ Published |
+| `faliproof-ai` | ✅ Published |
+| `faliproofai` | ⏳ npm support के लिए लंबित |
+
+> **लंबित क्यों?** npm की spam-prevention policy उन नामों को block करती है जो punctuation को हटाने और similarity checks चलाने के बाद एक existing package के समान string में normalize होते हैं। हमने इन नामों को anti-squatting के उद्देश्यों के लिए reserve करने के लिए npm support से संपर्क किया है। ये approval के बाद activate किए जाएंगे।
+
+आप यह सत्यापित कर सकते हैं कि कोई भी published alias हमारे द्वारा owned है:
+
+```bash
+npm info failproof
+# देखें: maintainers field में "ExosphereHost Inc."
+```
+
+---
+
+## Aliases कैसे काम करती हैं
+
+प्रत्येक alias package:
+
+1. `failproofai` को एक dependency के रूप में सूचीबद्ध करता है - तो real package install होता है और इसका binary available हो जाता है
+2. अपने स्वयं के नाम के अनुरूप एक binary को expose करता है (उदाहरण के लिए `failprof-ai`) जो सभी arguments को `failproofai` binary को proxy करता है
+
+Proxy एक two-line Node script है; कोई logic नहीं है, कोई network calls नहीं हैं, और कोई data collection नहीं है जो `failproofai` स्वयं करता है उसके अलावा।
+
+---
+
+## यदि आपको कोई ऐसा नाम मिले जिसे हमने miss किया है
+
+[failproofai/failproofai](https://github.com/failproofai/failproofai/issues) पर एक issue खोलें और हम इसे register करेंगे।

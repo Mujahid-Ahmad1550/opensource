@@ -1,0 +1,137 @@
+// @vitest-environment node
+import { describe, it, expect } from "vitest";
+import { findTranslationError } from "@/scripts/translate-docs/validate-translation";
+
+// English source with frontmatter: keys are `title` and `description`.
+const SOURCE = `---\ntitle: "Skill"\ndescription: "A page"\n---\n\n# Body\n`;
+
+// A source with NO frontmatter, like the root README.md.
+const README_SOURCE = `# Title\n\nSome prose.\n`;
+
+describe("findTranslationError", () => {
+  it("returns null for a valid translated page", async () => {
+    const rendered = `---\ntitle: "Fähigkeit"\ndescription: "Eine Seite"\n---\n\n# Körper\n`;
+    expect(await findTranslationError(rendered, SOURCE)).toBeNull();
+  });
+
+  it("flags a frontmatter YAML error and quotes the offending line", async () => {
+    // The reported class: an unescaped inner quote in the description value.
+    const rendered = `---\ntitle: "Fähigkeit"\ndescription: "Fragen Sie "ist etwas kaputt?""\n---\n\n# Körper\n`;
+    const error = await findTranslationError(rendered, SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("frontmatter");
+    expect(error).toMatch(/does not parse/);
+  });
+
+  it("flags a stray second opening delimiter", async () => {
+    // The exact shape that shipped to 102 published pages across seven locales.
+    // Every check that asks YAML calls this clean — YAML reads the leading
+    // `---` as a document-start marker and returns `{title, description}` — but
+    // Mintlify closes the block on line 2, so the keys render as body text and
+    // the page has no title at all. Only the second, Mintlify-shaped view sees
+    // it, which is the whole reason that view exists.
+    const rendered = `---\n---\ntitle: "Fähigkeit"\ndescription: "Eine Seite"\n---\n\n# Körper\n`;
+    const error = await findTranslationError(rendered, SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("empty");
+    // Says what to do, not just what is wrong — the message is read by a model
+    // that has to produce a corrected page on the retry.
+    expect(error).toContain("exactly one opening `---`");
+  });
+
+  it("flags a stray second opening delimiter on a frontmatter-less source", async () => {
+    // Nothing about the defect depends on the source having frontmatter: the
+    // page is equally broken either way, so the check runs for every shape.
+    const rendered = `---\n---\ntitle: "Titel"\n---\n\nEtwas Prosa.\n`;
+    const error = await findTranslationError(rendered, README_SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("empty");
+  });
+
+  it("still flags a stray delimiter that carries trailing whitespace", async () => {
+    // Mintlify closes the block on `--- ` just as it does on `---`, so the
+    // trailing space changes nothing about the defect.
+    const rendered = `---\n--- \ntitle: "Fähigkeit"\ndescription: "Eine Seite"\n---\n\n# Körper\n`;
+    const error = await findTranslationError(rendered, SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("empty");
+  });
+
+  it("does not read an indented `---` as a delimiter", async () => {
+    // A delimiter starts its line. Comparing trimmed lines let an indented
+    // `---` open or close the block, so both of these were rejected for an
+    // empty frontmatter block they do not have — a retry burned on a defect
+    // that is not there.
+    const indentedAfterOpener = `---\n  ---\n  Titel\n---\n\n# Körper\n`;
+    expect(await findTranslationError(indentedAfterOpener, README_SOURCE)).toBeNull();
+
+    const indentedFirstLine = `  ---\n---\n\n# Körper\n`;
+    expect(await findTranslationError(indentedFirstLine, README_SOURCE)).toBeNull();
+  });
+
+  it("flags a frontmatter block the model dropped entirely", async () => {
+    // A missing block is still valid YAML (mintlify tolerates it), so only the
+    // key-parity check against the source catches it.
+    const rendered = `# Körper\n\nKein Frontmatter hier.\n`;
+    const error = await findTranslationError(rendered, SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("missing");
+    // Names the keys the translation must restore.
+    expect(error).toContain("title");
+    expect(error).toContain("description");
+  });
+
+  it("flags frontmatter keys the model renamed or dropped", async () => {
+    // `title` renamed to `titel`.
+    const rendered = `---\ntitel: "Fähigkeit"\ndescription: "Eine Seite"\n---\n\n# Körper\n`;
+    const error = await findTranslationError(rendered, SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("keys changed");
+  });
+
+  it("allows an extra frontmatter key the source does not have", async () => {
+    // Extra keys cannot break the deploy, so they are tolerated (subset check).
+    const rendered = `---\ntitle: "Fähigkeit"\ndescription: "Eine Seite"\nicon: "book"\n---\n\n# Körper\n`;
+    expect(await findTranslationError(rendered, SOURCE)).toBeNull();
+  });
+
+  it("flags an MDX body error with an excerpt", async () => {
+    const rendered = `---\ntitle: "Fähigkeit"\ndescription: "Eine Seite"\n---\n\nInstall failproofai policy add <slug> now.\n`;
+    const error = await findTranslationError(rendered, SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("MDX body");
+    expect(error).toMatch(/slug|closing tag/i);
+    // The excerpt marks the failing line with a leading "> ".
+    expect(error).toMatch(/^> .*policy add <slug>/m);
+  });
+
+  it("runs body-only when the English source has no frontmatter", async () => {
+    // README shape: no frontmatter, so the key check is skipped entirely.
+    const broken = `# Titel\n\nInstall failproofai policy add <slug>.\n`;
+    const error = await findTranslationError(broken, README_SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("MDX body");
+
+    const valid = `# Titel\n\nEinfache Prosa.\n`;
+    expect(await findTranslationError(valid, README_SOURCE)).toBeNull();
+  });
+
+  it("flags malformed frontmatter the model added to a frontmatter-less source", async () => {
+    // The source has no frontmatter, but the translation invents a leading
+    // `---` block and botches its YAML. findMdxParseError would blank the block
+    // and miss it, so this only fails if the frontmatter is validated for every
+    // source shape — not just when the source itself had frontmatter.
+    const rendered = `---\ntitle: "Titel "kaputt""\n---\n\n# Körper\n`;
+    const error = await findTranslationError(rendered, README_SOURCE);
+    expect(error).not.toBeNull();
+    expect(error).toContain("frontmatter");
+    expect(error).toMatch(/does not parse/);
+  });
+
+  it("allows well-formed frontmatter the model added to a frontmatter-less source", async () => {
+    // A well-formed added block is harmless — Mintlify ignores unknown keys —
+    // so it must not be rejected.
+    const rendered = `---\ntitle: "Titel"\n---\n\n# Körper\n`;
+    expect(await findTranslationError(rendered, README_SOURCE)).toBeNull();
+  });
+});

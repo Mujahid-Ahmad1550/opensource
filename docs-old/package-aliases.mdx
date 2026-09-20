@@ -1,0 +1,82 @@
+---
+title: Package Aliases
+description: "Registered typosquat-prevention aliases and how they work"
+icon: copy
+---
+
+## Official package
+
+The canonical npm package is **`failproofai`**:
+
+```bash
+npm install -g failproofai
+# or
+bun add -g failproofai
+```
+
+---
+
+## Why we own the alias names
+
+Typosquatting is a common supply-chain attack where a malicious actor registers a package name that is one keystroke away from a popular package. Unsuspecting users who mistype the install command end up running attacker-controlled code with full system access - exactly the kind of threat Failproof AI is designed to defend against.
+
+To eliminate this surface, **we pre-emptively own all common misspellings and formatting variants** of `failproofai` on npm. None of these names can be registered by a third party. Each one is a thin proxy that installs and delegates to the real `failproofai` package.
+
+---
+
+## Registered aliases
+
+**Formatting variants** - different ways to write "failproof ai":
+
+| Package | Status |
+|---------|--------|
+| `failproof` | ✅ Published |
+| `failproof-ai` | ⏳ Pending npm support |
+| `fail-proof-ai` | ⏳ Pending npm support |
+| `failproof_ai` | ⏳ Pending npm support |
+| `fail_proof_ai` | ⏳ Pending npm support |
+| `fail-proofai` | ⏳ Pending npm support |
+
+**`failprof*` typos** - missing one `o` from "proof":
+
+| Package | Status |
+|---------|--------|
+| `failprof` | ✅ Published |
+| `failprof-ai` | ✅ Published |
+| `failprofai` | ⏳ Pending npm support |
+| `fail-prof-ai` | ⏳ Pending npm support |
+| `failprof_ai` | ⏳ Pending npm support |
+
+**`faliproof*` typos** - transposed `a` and `i`:
+
+| Package | Status |
+|---------|--------|
+| `faliproof` | ✅ Published |
+| `faliproof-ai` | ✅ Published |
+| `faliproofai` | ⏳ Pending npm support |
+
+> **Why pending?** npm's spam-prevention policy blocks names that normalize to the same string as an existing package after stripping punctuation and running similarity checks. We have contacted npm support to reserve these names for anti-squatting purposes. They will be activated once approved.
+
+You can verify any published alias is owned by us:
+
+```bash
+npm info failproof
+# Look for: "ExosphereHost Inc." in the maintainers field
+```
+
+---
+
+## How the aliases work
+
+Each alias package:
+
+1. Lists `failproofai` as a dependency - so the real package is installed and its binary becomes available
+2. Exposes a binary matching its own name (e.g. `failprof-ai`) that proxies all arguments to the `failproofai` binary
+
+The proxy is a two-line Node script; there is no logic, no network calls, and no data collection beyond what `failproofai` itself does.
+
+---
+
+## If you find a name we missed
+
+Open an issue at [failproofai/failproofai](https://github.com/failproofai/failproofai/issues) and we will register it.

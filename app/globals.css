@@ -1,0 +1,935 @@
+/* ============================================================
+   failproof_ai — unified design system
+   Single source of truth for fonts, color palette, and every
+   class that used to live in app/audit/audit-styles.css for the
+   /audit page only. After this change those classes (.section,
+   .share-btn, .btn-press, …) are available on every route, and
+   navigating between /audit and /policies no longer leaks
+   one-off resets in either direction.
+
+   IMPORTANT: every `@import` MUST come before any other rule,
+   per the CSS spec. `@import "tailwindcss"` inlines thousands
+   of utility rules at its position, so font @imports go above
+   it — putting them after silently breaks the build with a
+   PostCSS "must precede all rules" error.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=VT323&display=swap');
+@import "tailwindcss";
+
+@font-face {
+  font-family: 'Bitcount Prop Single';
+  src: url('/audit/fonts/bitcount-prop-single.woff2') format('woff2');
+  font-display: swap;
+  font-weight: 400;
+  font-style: normal;
+}
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* ── audit-native tokens (used by .section / .share-btn / etc.) ── */
+  --bg: #131316;
+  --bg-2: #0e0e11;
+  --bg-3: #1a1a1f;
+  --bg-row-hover: #17171c;
+  --ink: #d8d6d2;
+  --ink-2: #9a9892;
+  --dim: #5e5c58;
+  --line: #25252b;
+  --line-2: #32323a;
+  --accent-pink: #e4587c;
+  --accent-pink-soft: rgba(228, 88, 124, 0.7);
+  --accent-pink-shadow: #a83a5a;
+  --accent-pink-bg: rgba(228, 88, 124, 0.12);
+  --accent-green: #66d1b5;
+  --accent-green-shadow: #3e9a82;
+  --accent-green-bg: rgba(102, 209, 181, 0.10);
+  --amber: #e8c46a;
+  --amber-bg: rgba(232, 196, 106, 0.10);
+
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Bitcount Prop Single", "VT323", "JetBrains Mono", monospace;
+
+  /* ── shadcn-compatible aliases (used by Tailwind utilities + the
+     hooks-client component tree). All point at the audit palette so
+     `bg-card`, `text-foreground`, `border-border`, etc. produce
+     audit visuals everywhere without rewriting any class names. ── */
+  --radius: 0;
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--bg-2);
+  --card-foreground: var(--ink);
+  --popover: var(--bg-2);
+  --popover-foreground: var(--ink);
+  --primary: var(--accent-pink);
+  --primary-foreground: var(--bg);
+  --secondary: var(--bg-3);
+  --secondary-foreground: var(--ink);
+  --muted: var(--bg-3);
+  --muted-foreground: var(--ink-2);
+  --accent: var(--accent-pink);
+  --accent-light: #f08aa6;
+  --accent-lighter: #f7b3c5;
+  --accent-lightest: #fbd5de;
+  --accent-foreground: var(--bg);
+  --destructive: var(--accent-pink);
+  --border: var(--line);
+  --input: var(--line-2);
+  --ring: var(--accent-pink);
+  --chart-1: var(--accent-pink);
+  --chart-2: var(--accent-green);
+  --chart-3: var(--amber);
+  --chart-4: #f87171;
+  --chart-5: #a78bfa;
+  --sidebar: var(--bg-2);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--accent-pink);
+  --sidebar-primary-foreground: var(--bg);
+  --sidebar-accent: var(--bg-3);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--accent-pink);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+body {
+  background-color: var(--bg);
+  position: relative;
+}
+
+button { font-family: inherit; cursor: pointer; }
+a { color: inherit; }
+
+/* shrink scrollbars without breaking the dark theme */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg-2); }
+::-webkit-scrollbar-thumb { background: var(--line-2); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-pink); }
+* { scrollbar-width: thin; scrollbar-color: var(--line-2) var(--bg-2); }
+
+input[type="checkbox"] { accent-color: var(--accent-pink); }
+select { color-scheme: dark; }
+select option { background-color: var(--bg-2); color: var(--ink); }
+input[type="date"] { color-scheme: dark; }
+
+/* selection — pink wash ties prose snippets and code-like fragments to the
+   accent without redesigning anything; used app-wide. */
+::selection {
+  background: var(--accent-pink-bg);
+  color: var(--accent-light);
+}
+::-moz-selection {
+  background: var(--accent-pink-bg);
+  color: var(--accent-light);
+}
+
+/* focus-visible — keyboard users get a clear pink ring on every interactive
+   element. Pointer users see nothing different (`:focus-visible` only fires
+   on keyboard-driven focus). Bracketed outline + outline-offset matches the
+   pixel-craft chrome (no rounded glow). */
+:where(a, button, [role="button"], input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 1px solid var(--accent-pink);
+  outline-offset: 2px;
+}
+.btn:focus-visible,
+.tab:focus-visible {
+  outline: 1px solid var(--accent-pink);
+  outline-offset: 3px;
+}
+.btn-press:focus-visible {
+  outline: 1px solid var(--accent-pink);
+  outline-offset: 4px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-light: var(--accent-light);
+  --color-accent-lighter: var(--accent-lighter);
+  --color-accent-lightest: var(--accent-lightest);
+  --font-sans: var(--font-mono);
+  --font-mono: var(--font-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    font-size: 100%;
+  }
+}
+
+/* ───────────────────────── app chrome (shared) ───────────────────────── */
+
+.app-shell { position: relative; z-index: 3; min-height: 100vh; display: flex; flex-direction: column; }
+
+.app-header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 32px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(10,10,10,0.85);
+  backdrop-filter: blur(8px);
+  position: sticky; top: 0; z-index: 50;
+}
+.h-brand { display: inline-flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0; color: var(--ink); text-decoration: none; }
+.h-brand-mark {
+  color: var(--accent-pink);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  letter-spacing: -3px;
+  font-weight: 700;
+  line-height: 1;
+}
+.h-brand-name {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 0.11em;
+  text-transform: lowercase;
+  color: var(--ink);
+}
+.h-brand-sep { color: var(--dim); font-size: 12px; }
+.h-brand-section {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-green);
+}
+.h-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* Icon-only chrome control (settings). Sized to sit level with the refresh
+   group beside it, and dim until touched so the bar stays text-forward — the
+   icon is an affordance, not a highlight. */
+.h-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--ink-2);
+  border: 1px solid transparent;
+  transition:
+    color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.h-icon-btn:hover {
+  color: var(--ink);
+  border-color: var(--line-2);
+  background: rgba(255, 255, 255, 0.03);
+}
+.h-icon-btn.is-active {
+  color: var(--accent-pink);
+  border-color: var(--accent-pink);
+}
+.h-icon-btn:focus-visible {
+  outline: 2px solid var(--accent-pink);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .h-icon-btn { transition: none; }
+}
+
+/* header meta cluster (version + section label) — never wrap mid-token */
+.h-meta { display: flex; align-items: center; gap: 6px; white-space: nowrap; flex: none; }
+.h-version {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* Header responsiveness: progressively shed informational chrome instead of
+   crushing it. The version/section cluster duplicates the active tab, so it
+   goes first; below that the actions row wraps under the nav cleanly. */
+@media (max-width: 900px) {
+  .app-header { padding: 12px 16px; gap: 12px; }
+  .h-meta { display: none; }
+  .app-header .tab { padding: 12px 10px; }
+}
+@media (max-width: 620px) {
+  .app-header { flex-wrap: wrap; row-gap: 8px; }
+  .h-actions { margin-left: auto; }
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.04em;
+  border: 1px solid var(--line-2); background: transparent; color: var(--ink);
+  /* limit transitioned props so width/height/font don't animate, and use the
+     same cubic-bezier curve as .audit-bar-fill for a coherent motion feel */
+  transition:
+    color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--ink); background: rgba(255,255,255,0.03); }
+.btn:active { transform: translateY(1px); }
+.btn[aria-disabled="true"], .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn[aria-disabled="true"]:hover, .btn:disabled:hover { border-color: var(--line-2); background: transparent; }
+.btn-primary { border-color: var(--accent-pink); color: var(--accent-pink); }
+.btn-primary:hover { background: var(--accent-pink); color: var(--bg); }
+.btn-press {
+  box-shadow: 4px 4px 0 0 var(--accent-pink-shadow);
+  transition:
+    box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.btn-press:hover { box-shadow: 2px 2px 0 0 var(--accent-pink-shadow); transform: translate(2px, 2px); }
+.btn-press:active { box-shadow: 0 0 0 0 var(--accent-pink-shadow); transform: translate(4px, 4px); }
+
+/* primary tab strip — used by both the audit page and the policies/projects nav rows */
+.tabs {
+  display: flex; gap: 0; padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 16px;
+  font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.04em;
+  color: var(--ink-2);
+  border-bottom: 1px solid transparent; margin-bottom: -1px;
+  transition:
+    color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  white-space: nowrap;
+  background: transparent;
+}
+.tab:hover { color: var(--ink); }
+/* faint underline preview on hover — emerges from center on inactive tabs;
+   active state keeps the existing sharp full-width pink line. */
+.tab::after {
+  content: "";
+  position: absolute;
+  left: 16px; right: 16px; bottom: -1px;
+  height: 1px;
+  background: var(--accent-pink);
+  transform: scaleX(0);
+  transform-origin: center;
+  opacity: 0.4;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.tab:hover::after { transform: scaleX(1); }
+.tab.is-active { color: var(--accent-pink); border-bottom-color: var(--accent-pink); }
+.tab.is-active::after { display: none; }
+
+/* ───────────────────────── canonical page chrome ───────────────────────── */
+
+/* the canonical content shell. Scales to fill ultrawide monitors without
+   collapsing on mobile or letting prose lines get unreadable. The cap at
+   1840px keeps the line measure for tabular pages (policies activity,
+   sessions list) comfortably below "scan back to start of next row" length
+   on a 2560px display. Side gutter is clamped 20→56px so the chrome breathes
+   on big screens without crowding small ones. */
+.report {
+  width: 100%;
+  max-width: clamp(720px, 96vw, 1840px);
+  margin: 0 auto;
+  padding: 0 clamp(20px, 3vw, 56px);
+}
+
+.section {
+  padding: 64px 0;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+.section:last-child { border-bottom: none; }
+
+.section-mast {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 24px; margin-bottom: 24px; flex-wrap: wrap;
+}
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--accent-green);
+  display: inline-flex; align-items: baseline; gap: 10px;
+}
+/* The leader and the separator take the label's own colour rather than each
+ * carrying their own. A three-colour eyebrow (pink rule, dim dot, mint text)
+ * read as three things happening on one line instead of one label; the line
+ * names a section, which is a single fact, so it is a single colour. */
+.section-label .glyph { color: inherit; letter-spacing: -2px; }
+.section-label .sep { color: inherit; }
+.section-meta {
+  font-family: var(--font-mono);
+  font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--dim);
+}
+.section-meta .g { color: var(--accent-green); }
+.section-meta .p { color: var(--accent-pink); }
+.section-h {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.05; letter-spacing: 0.11em;
+  font-weight: 400; color: var(--ink);
+  margin: 0 0 18px;
+  text-transform: lowercase;
+  text-wrap: balance;
+}
+
+.section-h-dot {
+  display: inline-block;
+  width: 0.5em; height: 0.5em;
+  border-radius: 50%;
+  background: var(--accent-green);
+  margin-left: 0.45em;
+  vertical-align: middle;
+  animation: section-h-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes section-h-dot-pulse {
+  0%, 100% { opacity: 0.35; box-shadow: 0 0 3px var(--accent-green); }
+  50%      { opacity: 1;    box-shadow: 0 0 14px var(--accent-green); }
+}
+
+/* ───────────────────────── activity table styles ─────────────────────────
+   /policies activity tab. Lives next to the new .stat-bar + .filter-bar so
+   the table feels like the third panel of the same instrument family.    */
+
+.activity-table-wrap {
+  border: 1px solid var(--line-2);
+  border-top: 0;
+  background: var(--bg-2);
+  /* Scroll horizontally on narrow / portrait viewports instead of letting the
+     fixed-layout columns collapse into each other. Themed thin scrollbar so it
+     reads as part of the same instrument family. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+.activity-table-wrap::-webkit-scrollbar { height: 10px; }
+.activity-table-wrap::-webkit-scrollbar-track { background: var(--bg-3); }
+.activity-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border: 2px solid var(--bg-3);
+}
+.activity-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--accent-green); }
+/* min-width keeps every column wide enough for its header/badge; below it,
+   the wrap scrolls instead of squeezing columns into each other. */
+.activity-table { width: 100%; min-width: 1280px; }
+.activity-thead { background: var(--bg-3); }
+.activity-thead tr { border-bottom: 1px solid var(--line-2); }
+.activity-th {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--accent-green);
+  text-align: left;
+  white-space: nowrap;
+}
+.activity-th.text-right { text-align: right; }
+/* Data cells stay on one line and clip (with ellipsis) at their own column
+   edge, so a wide badge/value/header can never overlap the next column.
+   Scoped to data rows so the expanded detail row (colSpan) is untouched. */
+.activity-data-row > td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* zebra rhythm — adds ambient banding without breaking the dark feel.
+   Hover overrides the stripe so rows feel responsive. */
+.activity-table tbody tr.activity-row-stripe { background: rgba(255, 255, 255, 0.012); }
+
+/* expanded-row treatment */
+.activity-detail {
+  border-left: 3px solid var(--accent-pink);
+  background: var(--bg);
+  padding: 16px 22px 18px;
+}
+.activity-detail-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-pink);
+  margin-bottom: 10px;
+  display: inline-flex; align-items: baseline; gap: 6px;
+}
+
+/* ───────────────────────── instrument strip (.stat-bar) ─────────────────────
+   3-cell brutalist stats row used by /policies activity. Spans the full
+   container so the top of the view feels composed at every width.
+   Each cell carries a small green eyebrow caption above a big mono numeral.
+   On narrow viewports the grid collapses to a single column.            */
+
+.stat-bar {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+}
+.stat-bar::before,
+.stat-bar::after { content: ""; position: absolute; width: 10px; height: 10px; }
+.stat-bar::before {
+  top: -1px; left: -1px;
+  border-top: 1px solid var(--accent-pink);
+  border-left: 1px solid var(--accent-pink);
+}
+.stat-bar::after {
+  bottom: -1px; right: -1px;
+  border-bottom: 1px solid var(--accent-pink);
+  border-right: 1px solid var(--accent-pink);
+}
+.stat-cell {
+  padding: 18px 24px;
+  border-right: 1px dashed var(--line);
+  display: flex; flex-direction: column; gap: 6px;
+  min-width: 0;
+}
+.stat-cell:last-child { border-right: none; }
+.stat-cell .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-green);
+}
+.stat-cell .eyebrow .glyph { color: var(--accent-pink); letter-spacing: -2px; margin-right: 6px; }
+.stat-cell .value {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.stat-cell .value.is-deny { color: var(--accent-pink); }
+.stat-cell .value.is-warn { color: var(--amber); }
+.stat-cell .meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.05em;
+  /* let .meta values that contain a slash (e.g. policy paths) ellipsis */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@media (max-width: 800px) {
+  .stat-bar { grid-template-columns: 1fr; }
+  .stat-cell { border-right: none; border-bottom: 1px dashed var(--line); }
+  .stat-cell:last-child { border-bottom: none; }
+}
+
+/* ───────────────────────── filter console (.filter-bar) ──────────────────
+   Elastic row of `.filter-group`s. Each group stacks a small green eyebrow
+   label above its control. `.filter-group--grow` absorbs leftover space so
+   the text inputs naturally fill the remaining horizontal room.          */
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  padding: 14px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-top: 0;
+}
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.filter-group--grow { flex: 1 1 220px; }
+.filter-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-green);
+}
+.filter-input {
+  height: 30px;
+  width: 100%;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  outline: none;
+  transition: border-color 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.filter-input::placeholder { color: var(--dim); }
+.filter-input:focus { border-color: var(--accent-pink); }
+.filter-clear {
+  align-self: flex-end;
+  /* sits at the same baseline as the inputs; matches .btn but smaller */
+  padding: 6px 10px;
+  font-family: var(--font-mono); font-size: 12px;
+  color: var(--accent-pink);
+  background: transparent;
+  border: 1px dashed var(--accent-pink-soft);
+}
+.filter-clear:hover { background: var(--accent-pink-bg); border-color: var(--accent-pink); }
+
+/* ───────────────────────── reusable bracket panel ───────────────────────── */
+
+.panel {
+  position: relative;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  padding: 28px;
+  transition:
+    border-color 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.panel::before,
+.panel::after {
+  transition: width 200ms cubic-bezier(0.22, 1, 0.36, 1),
+              height 200ms cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.panel::before {
+  content: ""; position: absolute; top: -1px; left: -1px;
+  width: 10px; height: 10px;
+  border-top: 1px solid var(--accent-pink);
+  border-left: 1px solid var(--accent-pink);
+}
+.panel::after {
+  content: ""; position: absolute; bottom: -1px; right: -1px;
+  width: 10px; height: 10px;
+  border-bottom: 1px solid var(--accent-pink);
+  border-right: 1px solid var(--accent-pink);
+}
+/* opt-in interactive flavour: hovering grows the corner brackets and softens
+   the panel border. Apply to clickable card-like panels (e.g. project rows). */
+.panel.is-interactive { cursor: pointer; }
+.panel.is-interactive:hover { border-color: var(--line); }
+.panel.is-interactive:hover::before,
+.panel.is-interactive:hover::after { width: 16px; height: 16px; }
+.panel.is-interactive:focus-within { border-color: var(--accent-pink-soft); }
+
+/* ───────────────────────── animations (preserved from previous globals) ───────────────────────── */
+
+@keyframes entry-highlight {
+  0%   { background-color: color-mix(in oklch, var(--primary), transparent 82%); }
+  100% { background-color: transparent; }
+}
+.entry-highlighted {
+  animation: entry-highlight 3s ease-out forwards;
+  outline: 1px solid color-mix(in oklch, var(--primary), transparent 55%);
+  outline-offset: -1px;
+}
+
+@keyframes expand-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-expand {
+  animation: expand-in 150ms ease-out;
+}
+
+@keyframes audit-row-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.audit-row-enter {
+  opacity: 0;
+  animation: audit-row-in 400ms ease-out forwards;
+  animation-delay: var(--row-delay, 0ms);
+}
+
+@keyframes audit-bar-fill {
+  from { width: 0; }
+  to   { width: var(--bar-width, 100%); }
+}
+.audit-bar-fill {
+  width: var(--bar-width, 100%);
+  animation: audit-bar-fill 1000ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation-delay: var(--bar-delay, 0ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .audit-row-enter,
+  .audit-bar-fill {
+    animation: none;
+    opacity: 1;
+  }
+  .section-h-dot {
+    animation: none;
+  }
+  .tab::after,
+  .panel,
+  .panel::before,
+  .panel::after,
+  .btn,
+  .btn-press {
+    transition: none;
+  }
+}
+
+/* ============================================================
+   /project/[name] sessions list — calm filter bar + table.
+   Sharp 1px borders, no rounded corners, mono throughout,
+   dim small-caps labels. Mirrors the audit page's voice.
+   ============================================================ */
+
+.sessions-list { display: flex; flex-direction: column; gap: 16px; font-family: var(--font-mono); }
+
+.sessions-filter-bar {
+  display: flex; flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+}
+
+.sessions-filter-row {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 8px;
+}
+
+.sessions-filter-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-right: 4px;
+}
+.sessions-filter-icon { width: 12px; height: 12px; }
+
+.sessions-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+.sessions-chip:hover {
+  border-color: var(--accent-pink);
+  color: var(--accent-pink);
+}
+.sessions-chip.on {
+  border-color: var(--accent-pink);
+  color: var(--accent-pink);
+  background: var(--accent-pink-bg);
+}
+.sessions-chip:focus-visible {
+  outline: 2px solid var(--accent-pink);
+  outline-offset: 2px;
+}
+
+.sessions-input {
+  flex: 1 1 280px;
+  min-width: 220px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 140ms ease;
+}
+.sessions-input:focus { border-color: var(--accent-pink); }
+.sessions-input::placeholder { color: var(--dim); }
+
+.sessions-range-sep {
+  font-size: 11px; color: var(--dim);
+  letter-spacing: 0.04em;
+}
+
+.sessions-results-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.02em;
+  margin-top: 4px;
+}
+
+.sessions-table-wrap {
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  overflow-x: auto;
+}
+.sessions-table { width: 100%; border-collapse: collapse; }
+.sessions-th {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 500;
+  text-align: left;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+.sessions-th-icon { width: 36px; }
+
+.sessions-row { border-bottom: 1px solid var(--line); transition: background-color 140ms ease; }
+.sessions-row:last-child { border-bottom: none; }
+.sessions-row:hover { background: rgba(228, 88, 124, 0.03); }
+
+.sessions-td {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 12px 16px;
+  vertical-align: middle;
+}
+.sessions-td-icon { width: 36px; }
+.sessions-file-icon { width: 14px; height: 14px; color: var(--dim); }
+
+.sessions-td-name {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  max-width: 520px;
+}
+.sessions-link {
+  color: var(--ink);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  word-break: break-all;
+}
+.sessions-link:hover { color: var(--accent-pink); }
+.sessions-link[aria-disabled="true"] { color: var(--ink-2); cursor: default; }
+
+.sessions-td-date { font-size: 11px; color: var(--dim); white-space: nowrap; }
+
+.sessions-empty {
+  text-align: center;
+  font-size: 12px;
+  color: var(--dim);
+  padding: 32px 16px;
+}
+
+/* ============================================================
+   /project/[name] page header — back link, project title, meta.
+   ============================================================ */
+
+.project-page-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+  text-decoration: none;
+  padding: 6px 12px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+.project-page-back:hover {
+  border-color: var(--accent-pink);
+  color: var(--accent-pink);
+}
+.project-page-back .arrow { color: var(--dim); font-size: 12px; }
+
+.project-page-title {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 16px 0 8px;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
+.project-page-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.02em;
+  margin: 0 0 32px;
+}
+.project-page-meta .label { color: var(--ink-2); margin-right: 6px; }
+.project-page-meta .sep { margin: 0 12px; color: var(--line-2); }
+.project-page-meta .path { color: var(--ink-2); word-break: break-all; }
+
+.project-page-sessions-head {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-green);
+  margin-bottom: 16px;
+}
+
+.project-page-empty {
+  padding: 48px 32px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.project-page-empty .hint {
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 8px;
+  letter-spacing: 0.02em;
+}

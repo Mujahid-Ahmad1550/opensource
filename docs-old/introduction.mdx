@@ -1,0 +1,57 @@
+---
+title: "Failproof AI"
+description: "FailproofAI gives AI agents 39 built-in failure policies that catch loops, secret leaks, destructive tool calls, and more in a single install."
+---
+
+[![npm weekly downloads](https://img.shields.io/npm/dw/failproofai?style=flat-square&color=2ea44f)](https://www.npmjs.com/package/failproofai)
+
+Hooks and policies for **AI failure handling**, **error recovery**, and **LLM reliability**. Keep your AI agents reliable and running autonomously across **Claude Code**, **OpenAI Codex**, **GitHub Copilot**, **Cursor Agent**, **OpenCode**, **Pi**, **Hermes**, **OpenClaw**, **Factory Droid**, **Devin CLI**, **Antigravity CLI**, and the **Agents SDK**.
+
+AI agents fail in predictable ways. They run destructive commands, leak secrets, drift off-task, get stuck in loops, or push directly to main. Left unattended, small failures cascade into outages, leaked credentials, and lost work.
+
+FailproofAI solves this with **policies**. These rules hook into every agent tool call to **detect failures**, **mitigate them** (block, instruct, sanitize), and **alert you** when something needs attention. A local dashboard lets you review every tool call, agent failure, and recovery action afterward.
+
+Transcripts and policy evaluation stay on your machine. Data is sent only when you explicitly use an online feature, such as authenticated audit reminders or invitations.
+
+## Get started
+
+<CardGroup cols={2}>
+
+<Card title="39 built-in policies" icon="shield" href="/built-in-policies">
+  Block destructive commands, prevent secret leakage, keep agents inside project boundaries, and more. All out of the box.
+</Card>
+
+<Card title="Custom policies" icon="code" href="/custom-policies">
+  Write your own rules in JavaScript with a simple allow / deny / instruct API.
+</Card>
+
+<Card title="Agent monitor" icon="chart-line" href="/dashboard">
+  See what your agents did while you were away. Browse sessions, inspect tool calls, review where policies fired.
+</Card>
+
+<Card title="Easy configuration" icon="gear" href="/configuration">
+  Tune any policy without code. Set allowlists, protected branches, or thresholds per-project or globally.
+</Card>
+
+</CardGroup>
+
+## Quick start
+
+<CodeGroup>
+
+```bash npm
+npm install -g failproofai
+```
+
+```bash bun
+bun add -g failproofai
+```
+
+</CodeGroup>
+
+```bash
+failproofai policies --install   # enable policies (or skip — `failproofai` will offer to set them up on first run)
+failproofai                      # launch the dashboard
+```
+
+See the [Getting started](/getting-started) guide for the full walkthrough.

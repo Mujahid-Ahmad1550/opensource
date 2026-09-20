@@ -1,0 +1,204 @@
+/**
+ * Per-CLI dispatcher for the dashboard's Download Logs endpoint.
+ *
+ * Returns either a real on-disk path (so the route can `createReadStream` and
+ * stream the bytes verbatim) or a synthesized JSON/JSONL body for agents whose
+ * transcripts live in SQLite.
+ *
+ * Per-CLI session loaders / transcript finders already exist in their own
+ * files; this module is the thin glue that picks the right one. Imports of
+ * the per-CLI modules are dynamic so callers that only need the dispatch
+ * type can avoid pulling Node-only deps into client bundles.
+ */
+import { resolveSessionFilePath, UUID_RE } from "./projects";
+import type { CliId } from "./cli-registry";
+
+export const OPENCODE_SESSION_RE = /^ses_[A-Za-z0-9]+$/;
+/** Hermes session IDs (e.g. `YYYYMMDD_HHMMSS_<hash>` / `cron_<hash>_...`). Kept
+ *  in sync with `getHermesSessionLog`'s validator in lib/hermes-sessions.ts —
+ *  a stricter pattern here would let a session list/open in the viewer yet fail
+ *  its download with `RangeError("Invalid session ID")`. */
+export const HERMES_SESSION_RE = /^[A-Za-z0-9_-]+$/;
+
+/** OpenClaw sessions are UUID-named files. Kept in sync with
+ *  OPENCLAW_SESSION_ID_RE in lib/openclaw-sessions.ts. */
+export const OPENCLAW_SESSION_RE = /^[0-9a-fA-F-]{36}$/;
+
+/** Devin session IDs are word-slug style (e.g. `estimated-seeker`). Kept in
+ *  sync with DEVIN_SESSION_ID_RE in lib/devin-sessions.ts. */
+export const DEVIN_SESSION_RE = /^[A-Za-z0-9_-]+$/;
+
+/** Goose session IDs are date-prefixed counters (e.g. `20260714_3`). Kept in
+ *  sync with GOOSE_SESSION_ID_RE in lib/goose-sessions.ts. */
+export const GOOSE_SESSION_RE = /^\d{8}_\d+$/;
+
+export type DownloadSource =
+  | { kind: "file"; path: string }
+  | {
+      kind: "synthesized";
+      body: string;
+      contentType: string;
+      extension: string;
+    };
+
+/** Validate a session ID against the per-CLI shape. OpenCode uses `ses_*`
+ *  prefixes; everyone else is a UUID. */
+export function isValidSessionId(cli: CliId, sessionId: string): boolean {
+  if (cli === "opencode") return OPENCODE_SESSION_RE.test(sessionId);
+  if (cli === "hermes") return HERMES_SESSION_RE.test(sessionId);
+  if (cli === "openclaw") return OPENCLAW_SESSION_RE.test(sessionId);
+  if (cli === "devin") return DEVIN_SESSION_RE.test(sessionId);
+  if (cli === "goose") return GOOSE_SESSION_RE.test(sessionId);
+  return UUID_RE.test(sessionId);
+}
+
+/**
+ * Resolve a download source for `(cli, sessionId)`. `project` is only
+ * meaningful for Claude (path-traversal validation under the projects root);
+ * the other CLIs key sessions by ID alone.
+ *
+ * Returns `null` when the session can't be located. Throws RangeError when
+ * the inputs fail validation (caller should map to 400).
+ */
+export async function resolveDownloadSource(
+  cli: CliId,
+  project: string,
+  sessionId: string,
+): Promise<DownloadSource | null> {
+  if (!isValidSessionId(cli, sessionId)) {
+    throw new RangeError("Invalid session ID");
+  }
+
+  if (cli === "claude") {
+    // resolveSessionFilePath validates project and joins under the Claude root.
+    return { kind: "file", path: resolveSessionFilePath(project, sessionId) };
+  }
+
+  if (cli === "codex") {
+    const { findCodexTranscript } = await import("./codex-sessions");
+    const path = findCodexTranscript(sessionId);
+    return path ? { kind: "file", path } : null;
+  }
+  if (cli === "copilot") {
+    const { findCopilotTranscript } = await import("./copilot-sessions");
+    const path = findCopilotTranscript(sessionId);
+    return path ? { kind: "file", path } : null;
+  }
+  if (cli === "cursor") {
+    const { findCursorTranscript } = await import("./cursor-sessions");
+    const path = findCursorTranscript(sessionId);
+    return path ? { kind: "file", path } : null;
+  }
+  if (cli === "pi") {
+    const { findPiTranscript } = await import("./pi-sessions");
+    const path = findPiTranscript(sessionId);
+    return path ? { kind: "file", path } : null;
+  }
+  if (cli === "opencode") {
+    // OpenCode keeps sessions in SQLite (~/.local/share/opencode/opencode.db)
+    // across three tables: session / message / part. Export all three so
+    // users get a faithful snapshot of the underlying structure rather than
+    // a collapsed single-stream that loses parts.
+    const { getOpenCodeSessionExport } = await import("./opencode-sessions");
+    const result = await getOpenCodeSessionExport(sessionId);
+    if (!result) return null;
+    const body = JSON.stringify(result, null, 2) + "\n";
+    return {
+      kind: "synthesized",
+      body,
+      contentType: "application/json",
+      extension: "json",
+    };
+  }
+
+  if (cli === "hermes") {
+    // Hermes keeps sessions in SQLite (~/.hermes/state.db). Synthesize a JSONL
+    // export of the session's raw `messages` rows.
+    const { getHermesSessionLog } = await import("./hermes-sessions");
+    const result = await getHermesSessionLog(sessionId);
+    if (!result) return null;
+    const body =
+      result.rawLines.map((r) => JSON.stringify(r)).join("\n") + "\n";
+    return {
+      kind: "synthesized",
+      body,
+      contentType: "application/x-ndjson",
+      extension: "jsonl",
+    };
+  }
+
+  if (cli === "openclaw") {
+    // New OpenClaw versions keep live transcripts in SQLite. Export the exact
+    // event_json rows as JSONL; fall back to streaming archived JSONL files.
+    const { findOpenClawTranscript, listOpenClawAgents, openclawHome } =
+      await import("./openclaw-sessions");
+    const { readOpenClawSqliteTranscript } = await import("./openclaw-db");
+    const sqlite = await readOpenClawSqliteTranscript(
+      openclawHome(),
+      listOpenClawAgents(),
+      sessionId,
+    );
+    if (sqlite) {
+      return {
+        kind: "synthesized",
+        body: sqlite.eventJsonLines.join("\n") + "\n",
+        contentType: "application/x-ndjson",
+        extension: "jsonl",
+      };
+    }
+    const path = findOpenClawTranscript(sessionId);
+    return path ? { kind: "file", path } : null;
+  }
+
+  if (cli === "factory") {
+    // Factory (droid) writes real JSONL transcripts on disk — stream verbatim.
+    const { findFactoryTranscript } = await import("./factory-sessions");
+    const path = findFactoryTranscript(sessionId);
+    return path ? { kind: "file", path } : null;
+  }
+
+  if (cli === "devin") {
+    // Devin keeps sessions in SQLite (~/.local/share/devin/cli/sessions.db).
+    // Synthesize a JSONL export of the session's raw chat_message rows.
+    const { getDevinSessionLog } = await import("./devin-sessions");
+    const result = await getDevinSessionLog(sessionId);
+    if (!result) return null;
+    const body =
+      result.rawLines.map((r) => JSON.stringify(r)).join("\n") + "\n";
+    return {
+      kind: "synthesized",
+      body,
+      contentType: "application/x-ndjson",
+      extension: "jsonl",
+    };
+  }
+
+  if (cli === "antigravity") {
+    // Antigravity (agy) writes real JSONL transcripts on disk — stream verbatim.
+    const { findAntigravityTranscript } =
+      await import("./antigravity-sessions");
+    const path = findAntigravityTranscript(sessionId);
+    return path ? { kind: "file", path } : null;
+  }
+
+  if (cli === "goose") {
+    // Goose keeps sessions in SQLite (~/.local/share/goose/sessions/sessions.db).
+    // Synthesize a JSONL export of the session's raw `messages` rows.
+    const { getGooseSessionLog } = await import("./goose-sessions");
+    const result = await getGooseSessionLog(sessionId);
+    if (!result) return null;
+    const body =
+      result.rawLines.map((r) => JSON.stringify(r)).join("\n") + "\n";
+    return {
+      kind: "synthesized",
+      body,
+      contentType: "application/x-ndjson",
+      extension: "jsonl",
+    };
+  }
+
+  // Exhaustive — but TypeScript can't always see CliId is exhausted across the
+  // if-chain above, so guard with a runtime fallback.
+  const _exhaustive: never = cli;
+  return _exhaustive;
+}

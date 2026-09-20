@@ -1,0 +1,859 @@
+---
+title: Built-in Policies
+description: "All 39 built-in policies that catch common agent failure modes"
+icon: shield
+---
+
+failproofai ships with 39 built-in policies that catch common agent failure modes. Each policy fires on a specific hook event type and tool name. Nineteen policies accept parameters that let you tune their behavior without writing code. Five workflow policies enforce a commit → push → PR → CI pipeline before Claude stops.
+
+---
+
+## Overview
+
+Policies are grouped into categories:
+
+| Category | Policies | Hook type |
+|----------|----------|-----------|
+| [Dangerous commands](#dangerous-commands) | block-sudo, block-rm-rf, block-curl-pipe-sh, block-failproofai-commands, block-self-pause | PreToolUse |
+| [Infra commands](#infra-commands) | block-kubectl, block-terraform, block-aws-cli, block-gcloud, block-az-cli, block-helm, block-gh-pipeline | PreToolUse |
+| [Secrets (sanitizers)](#secrets-sanitizers) | sanitize-jwt, sanitize-api-keys, sanitize-connection-strings, sanitize-private-key-content, sanitize-bearer-tokens | PostToolUse |
+| [Environment](#environment) | block-env-files, protect-env-vars | PreToolUse |
+| [File access](#file-access) | block-read-outside-cwd, block-secrets-write | PreToolUse |
+| [Git](#git) | block-push-master, block-work-on-main, block-force-push, warn-git-amend, warn-git-stash-drop, warn-all-files-staged | PreToolUse |
+| [Database](#database) | warn-destructive-sql, warn-schema-alteration | PreToolUse |
+| [Warnings](#warnings) | warn-large-file-write, warn-package-publish, warn-background-process, warn-global-package-install | PreToolUse |
+| [Package managers](#package-managers) | prefer-package-manager | PreToolUse |
+| [Workflow](#workflow) | require-commit-before-stop, require-push-before-stop, require-pr-before-stop, require-no-conflicts-before-stop, require-ci-green-before-stop | Stop |
+
+- **`block-`** — stop the agent from proceeding.
+- **`warn-`** — give the agent additional context so it can self-correct.
+- **`sanitize-`** — scrub sensitive data from tool output before the agent sees it.
+
+### Namespaces
+
+Every policy lives in a `<namespace>/<name>` slot. Built-in policies belong to the
+**`failproofai/`** namespace — for example, `failproofai/sanitize-jwt`. The
+namespace prevents collisions when you also load custom or third-party policies
+with similar short names.
+
+In your config you can refer to a built-in by either its short name or its
+qualified name; both forms resolve to the same policy:
+
+```json
+{
+  "enabledPolicies": [
+    "sanitize-jwt",
+    "failproofai/block-rm-rf"
+  ]
+}
+```
+
+If a name has no `/`, failproofai treats it as belonging to the default
+namespace `failproofai`. Names that already contain a `/` (e.g. `myorg/foo`,
+`custom/my-hook`) are kept as-is.
+- **`require-`** — block the Stop event until conditions are met.
+
+---
+
+<Tip>
+Every policy supports an optional `hint` field in `policyParams`. The hint is appended to the deny or instruct message Claude sees, giving actionable guidance without modifying policy code. Works with built-in, custom, and convention policies. See [Configuration → hint](/configuration#hint-cross-cutting) for details.
+</Tip>
+
+---
+
+## Dangerous commands
+
+Prevent agents from running operations that are hard to undo or that could damage the host system.
+
+### `block-sudo`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies any `sudo` or `doas` command.
+
+Blocks a command that runs an elevation binary **in command position**. Matching is structural rather than textual: the command is split into segments the way a shell would, prefix assignments (`FOO=bar`), redirections, and runners with their flags (`env`, `nohup`, `timeout`, `xargs`, `sh -c`, …) are walked off, and the resulting binary is compared by **basename**. So `/usr/bin/sudo`, `env sudo`, `timeout 5 sudo`, `"sudo"`, `\sudo` and `bash -c "sudo …"` are all denied, and `doas` is treated as the same capability under a different name.
+
+Because it anchors on command position rather than on the word appearing anywhere, it does **not** fire on commands that merely mention it — `grep -r sudo /etc`, `cat /etc/sudoers`, `git commit -m "fix sudo handling"`, or a `grep` alternation containing the word all run normally.
+
+<Warning>
+This stops the obvious attempt; it does not close the class. An agent that can run arbitrary shell can still reach elevation indirectly — through a variable (`S=sudo; $S …`), a base64-decoded pipe, or a wrapper script on disk — because no inspection of a single command string can follow those. Treat this as a guardrail against mistakes and casual escalation, not as a security boundary against a determined agent. A real boundary has to be enforced below the shell.
+</Warning>
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | Exact command prefixes that are permitted. Each entry is matched against the parsed argv tokens. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-sudo": {
+      "allowPatterns": ["sudo systemctl status", "sudo journalctl"]
+    }
+  }
+}
+```
+
+With this config, `sudo systemctl status nginx` is allowed, but `sudo rm /etc/hosts` is denied.
+
+<Note>
+Patterns are matched against parsed tokens, not the raw command string. This prevents bypass via appended shell operators (e.g. `sudo systemctl status x; rm -rf /` does not match `sudo systemctl status *`).
+</Note>
+
+---
+
+### `block-rm-rf`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies `rm -rf`, `rm -fr`, and similar recursive deletion forms.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPaths` | `string[]` | `[]` | Paths that are safe to recursively delete (e.g. `/tmp`). |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-rm-rf": {
+      "allowPaths": ["/tmp", "/var/cache"]
+    }
+  }
+}
+```
+
+---
+
+### `block-curl-pipe-sh`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies `curl <url> | bash`, `curl <url> | sh`, `wget <url> | bash`, and similar patterns.
+
+No parameters.
+
+---
+
+### `block-failproofai-commands`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies commands that would uninstall or disable failproofai itself (e.g. `npm uninstall failproofai`, `failproofai policies --uninstall`).
+
+No parameters.
+
+---
+
+### `block-self-pause`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies `failproofai config --pause`, which suspends enforcement for a session. Pausing is a human decision — an agent able to run it could switch off every other policy with a single command.
+
+Narrower than [`block-failproofai-commands`](#block-failproofai-commands) on purpose, and not covered by it: that policy anchors on a command boundary, so `npx -y failproofai config --pause` does not match it, and being broad it is often switched off so agents can run `failproofai audit`. `--resume` and `--status` are allowed — neither removes enforcement.
+
+This stops the direct attempt, not the whole class: an agent can still reach the same state through an alias or a wrapper script. Closing it fully requires the pause to be unreachable from a tool call at all.
+
+No parameters.
+
+---
+
+## Infra commands
+
+Stop coding agents from running infrastructure CLIs or triggering CI/CD pipelines. All policies in this category are **opt-in** (`defaultEnabled: false`) — agents that legitimately need to call `kubectl`, `terraform`, etc. will not be disrupted unless you enable the policy. When enabled, every invocation of the matched CLI is denied unless the command matches an entry in `allowPatterns`.
+
+The pattern grammar is the same as [`block-sudo`](#block-sudo): tokens are matched against parsed argv, `*` is a wildcard for one token, and any command containing a standalone shell operator (`&&`, `||`, `|`, `;`) or a token with embedded shell metacharacters is rejected before allowlist matching to prevent injection bypasses.
+
+### `block-kubectl`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies any `kubectl` invocation.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | kubectl command prefixes that are permitted. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-kubectl": {
+      "allowPatterns": ["kubectl get *", "kubectl describe *", "kubectl logs *"]
+    }
+  }
+}
+```
+
+With this config, `kubectl get pods` is allowed but `kubectl apply -f deploy.yaml` is denied.
+
+---
+
+### `block-terraform`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies any `terraform` or `tofu` (OpenTofu) invocation.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | terraform/tofu command prefixes that are permitted. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-terraform": {
+      "allowPatterns": ["terraform plan", "terraform validate", "terraform show *"]
+    }
+  }
+}
+```
+
+---
+
+### `block-aws-cli`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies any `aws` CLI invocation.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | aws CLI command prefixes that are permitted. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-aws-cli": {
+      "allowPatterns": ["aws s3 ls *", "aws sts get-caller-identity"]
+    }
+  }
+}
+```
+
+---
+
+### `block-gcloud`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies any `gcloud` (Google Cloud) CLI invocation.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | gcloud command prefixes that are permitted. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-gcloud": {
+      "allowPatterns": ["gcloud auth list", "gcloud config list"]
+    }
+  }
+}
+```
+
+---
+
+### `block-az-cli`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies any `az` (Azure) CLI invocation.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | az CLI command prefixes that are permitted. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-az-cli": {
+      "allowPatterns": ["az account show", "az group list"]
+    }
+  }
+}
+```
+
+---
+
+### `block-helm`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies any `helm` invocation.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | helm command prefixes that are permitted. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-helm": {
+      "allowPatterns": ["helm list", "helm status *"]
+    }
+  }
+}
+```
+
+---
+
+### `block-gh-pipeline`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies the following `gh` CLI subcommands that mutate state or trigger pipelines:
+
+- `gh workflow run`, `gh workflow enable`, `gh workflow disable`
+- `gh run rerun`, `gh run cancel`
+- `gh pr merge`
+- `gh release create`, `gh release delete`
+- `gh cache delete`
+- `gh secret set`, `gh secret delete`
+
+Read-only `gh` subcommands such as `gh pr view`, `gh pr list`, `gh run list`, `gh release view`, and `gh api repos/.../...` are **not** matched by this policy — they are routinely needed for workflow checks (including failproofai's own `require-ci-green-before-stop`).
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPatterns` | `string[]` | `[]` | Specific scripted invocations to allow even though they would otherwise be denied. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-gh-pipeline": {
+      "allowPatterns": ["gh run rerun *"]
+    }
+  }
+}
+```
+
+---
+
+## Secrets (sanitizers)
+
+Stop agents from leaking credentials into their context or output. Sanitizer policies fire on **PostToolUse** events. When Claude runs a Bash command, reads a file, or calls any tool, these policies inspect the output before it is returned to Claude. If a secret pattern is detected, the policy returns a deny decision that prevents the output from being passed back.
+
+### `sanitize-jwt`
+
+**Event:** PostToolUse (all tools)  
+**Default:** Redacts JWT tokens (three base64url segments separated by `.`).
+
+No parameters.
+
+---
+
+### `sanitize-api-keys`
+
+**Event:** PostToolUse (all tools)  
+**Default:** Redacts common API key formats: Anthropic (`sk-ant-`), OpenAI (`sk-`), GitHub PATs (`ghp_`), AWS access keys (`AKIA`), Stripe keys (`sk_live_`, `sk_test_`), and Google API keys (`AIza`).
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `additionalPatterns` | `{ regex: string; label: string }[]` | `[]` | Additional regex patterns to treat as secrets. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "sanitize-api-keys": {
+      "additionalPatterns": [
+        { "regex": "myco_[A-Za-z0-9]{32}", "label": "MyCo internal API key" },
+        { "regex": "pat_[0-9a-f]{40}", "label": "Internal PAT" }
+      ]
+    }
+  }
+}
+```
+
+---
+
+### `sanitize-connection-strings`
+
+**Event:** PostToolUse (all tools)  
+**Default:** Redacts database connection strings that contain embedded credentials (e.g. `postgresql://user:password@host/db`).
+
+No parameters.
+
+---
+
+### `sanitize-private-key-content`
+
+**Event:** PostToolUse (all tools)  
+**Default:** Redacts PEM blocks (`-----BEGIN PRIVATE KEY-----`, `-----BEGIN RSA PRIVATE KEY-----`, etc.).
+
+No parameters.
+
+---
+
+### `sanitize-bearer-tokens`
+
+**Event:** PostToolUse (all tools)  
+**Default:** Redacts `Authorization: Bearer <token>` headers where the token is 20 or more characters.
+
+No parameters.
+
+---
+
+## Environment
+
+Protect sensitive environment configuration from being read or exposed by agents.
+
+### `block-env-files`
+
+**Event:** PreToolUse (Bash, Read)  
+**Default:** Denies reading `.env` files via `cat .env`, `Read` tool calls with `.env` as the file path, etc.
+
+Does not block `.envrc` or other environment-adjacent files - only files named exactly `.env`.
+
+No parameters.
+
+---
+
+### `protect-env-vars`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies commands that print environment variables: `printenv`, `env`, `echo $VAR`.
+
+No parameters.
+
+---
+
+## File access
+
+Keep agents working inside project boundaries and away from sensitive files.
+
+### `block-read-outside-cwd`
+
+**Event:** PreToolUse (Read, Bash)  
+**Default:** Denies reading files outside the project root. The boundary is `CLAUDE_PROJECT_DIR` (set once per session by Claude Code), with a fallback to the session's current working directory when that variable is unset. Using the project root rather than the live `cwd` means the boundary stays stable even after Claude `cd`s into a subdirectory.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowPaths` | `string[]` | `[]` | Absolute path prefixes that are permitted even if outside the project root. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-read-outside-cwd": {
+      "allowPaths": ["/shared/data", "/opt/company/config"]
+    }
+  }
+}
+```
+
+---
+
+### `block-secrets-write`
+
+**Event:** PreToolUse (Write, Edit)  
+**Default:** Denies writes to files commonly used for private keys and certificates: `id_rsa`, `id_ed25519`, `*.key`, `*.pem`, `*.p12`, `*.pfx`.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `additionalPatterns` | `string[]` | `[]` | Additional filename patterns (glob-style) to block. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-secrets-write": {
+      "additionalPatterns": [".token", ".secret"]
+    }
+  }
+}
+```
+
+---
+
+## Git
+
+Prevent accidental pushes, force-pushes, and branch mistakes that are hard to undo.
+
+### `block-push-master`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies `git push origin main` and `git push origin master`.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `protectedBranches` | `string[]` | `["main", "master"]` | Branch names that cannot be pushed to directly. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "block-push-master": {
+      "protectedBranches": ["main", "master", "release", "prod"]
+    }
+  }
+}
+```
+
+<Tip>
+To allow pushing to all branches (effectively disabling this policy without removing it from `enabledPolicies`), set `protectedBranches: []`.
+</Tip>
+
+---
+
+### `block-work-on-main`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies `git commit`, `git merge`, `git rebase`, and `git cherry-pick` while the working tree is on `main` or `master`. Branch creation and switching (`git checkout`, `git checkout -b`, `git switch`, `git switch -c`) are not affected.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `protectedBranches` | `string[]` | `["main", "master"]` | Branch names on which commit/merge/rebase/cherry-pick is denied. |
+
+---
+
+### `block-force-push`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Denies `git push --force` and `git push -f`.
+
+No policy-specific parameters. Use the cross-cutting [`hint`](/configuration#hint-cross-cutting) to suggest alternatives:
+
+```json
+{
+  "policyParams": {
+    "block-force-push": {
+      "hint": "Create a new branch from your current HEAD (e.g. `git checkout -b <new-branch>`) and push that instead."
+    }
+  }
+}
+```
+
+---
+
+### `warn-git-amend`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Instructs Claude to proceed carefully when running `git commit --amend`. Does not block the command.
+
+No parameters.
+
+---
+
+### `warn-git-stash-drop`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Instructs Claude to confirm before running `git stash drop`. Does not block the command.
+
+No parameters.
+
+---
+
+### `warn-all-files-staged`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Instructs Claude to review what it is staging when it runs `git add -A` or `git add .`. Does not block the command.
+
+No parameters.
+
+---
+
+## Database
+
+Catch destructive SQL operations before they execute against your database.
+
+### `warn-destructive-sql`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Instructs Claude to confirm before running SQL containing `DROP TABLE`, `DROP DATABASE`, or `DELETE` without a `WHERE` clause.
+
+No parameters.
+
+---
+
+### `warn-schema-alteration`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Instructs Claude to confirm before running `ALTER TABLE` statements.
+
+No parameters.
+
+---
+
+## Warnings
+
+Give agents extra context before potentially risky but non-destructive operations.
+
+### `warn-large-file-write`
+
+**Event:** PreToolUse (Write)  
+**Default:** Instructs Claude to confirm before writing files larger than 1024 KB.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `thresholdKb` | `number` | `1024` | File size threshold in kilobytes above which a warning is issued. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "warn-large-file-write": {
+      "thresholdKb": 256
+    }
+  }
+}
+```
+
+<Note>
+The hook handler enforces a 1 MB stdin limit on payloads. To test this policy with small content, set `thresholdKb` to a value well below 1024.
+</Note>
+
+---
+
+### `warn-package-publish`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Instructs Claude to confirm before running `npm publish`.
+
+No parameters.
+
+---
+
+### `warn-background-process`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Instructs Claude to be careful when launching background processes via `nohup`, `&`, `disown`, or `screen`.
+
+No parameters.
+
+---
+
+### `warn-global-package-install`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Instructs Claude to confirm before running `npm install -g`, `yarn global add`, or `pip install` without a virtual environment.
+
+No parameters.
+
+---
+
+## Package managers
+
+Enforce which package managers the agent is allowed to use.
+
+### `prefer-package-manager`
+
+**Event:** PreToolUse (Bash)  
+**Default:** Disabled. When enabled, blocks any package manager command not in the `allowed` list and tells Claude to rewrite the command using an allowed manager.
+
+Detects: pip, pip3, python -m pip, npm, npx, yarn, pnpm, pnpx, bun, bunx, uv, poetry, pipenv, conda, cargo.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `allowed` | string[] | `[]` | Allowed package manager names. Any detected manager not in this list is blocked. When empty, the policy is a no-op. |
+| `blocked` | string[] | `[]` | Additional manager names to block beyond the built-in list (e.g. `['pdm', 'pipx']`). |
+
+The built-in block list covers: pip, pip3, npm, npx, yarn, pnpm, pnpx, bun, bunx, uv, poetry, pipenv, conda, cargo. Use `blocked` to append managers not in this list.
+
+**Example configuration:**
+
+```json
+{
+  "enabledPolicies": ["prefer-package-manager"],
+  "policyParams": {
+    "prefer-package-manager": {
+      "allowed": ["uv", "bun"],
+      "blocked": ["pdm", "pipx"]
+    }
+  }
+}
+```
+
+With this config, `pip install flask` and `pdm install flask` are both denied with a message telling Claude to use `uv` or `bun` instead. Commands like `uv pip install flask` are allowed because `uv` is in the allowlist and is checked first.
+
+---
+
+## AI behavior
+
+Detect when agents get stuck or behave unexpectedly.
+
+### `warn-repeated-tool-calls`
+
+**Event:** PreToolUse (all tools)  
+**Default:** Instructs Claude to reconsider when the same tool is called 3+ times with identical parameters - a common sign the agent is stuck in a loop.
+
+No parameters.
+
+---
+
+## Workflow
+
+Enforce a disciplined end-of-session workflow. These policies fire on the **Stop** event and deny the agent from stopping until each condition is met. They follow a natural dependency chain: commit → push → PR → CI. If a policy denies, later policies in the chain are skipped (deny short-circuits).
+
+All workflow policies are **fail-open**: if the required tool is not available (e.g. `gh` not installed, no git remote), the policy allows with an informational message explaining why the check was skipped.
+
+### Per-CLI Stop semantics
+
+Stop enforcement looks slightly different across the six supported CLIs because each one exposes a different "agent finished" hook contract. The **outcome** is the same — the agent doesn't get away with stopping while a workflow gate is failing — but the **mechanics** differ. The table below summarizes; only Pi has a user-visible quirk worth understanding before you enable a `require-*-before-stop` policy.
+
+| CLI | When the gate fires | What you see |
+|---|---|---|
+| Claude Code | Same agent loop, immediately | Claude continues working — fixes the issue, then attempts to finish again. No interruption visible to you. |
+| Codex | Same agent loop, immediately | Same as Claude. |
+| GitHub Copilot CLI | Same agent loop, immediately | Same as Claude (uses Copilot's `{decision:"block", reason}` retry channel — verified empirically against Copilot CLI 1.0.41). |
+| Cursor Agent | Same agent loop, immediately | Same as Claude (uses Cursor's `{followup_message}` channel — capped at `loop_limit`, default 5 retries). |
+| OpenCode | Same agent loop, immediately | Same as Claude (uses OpenCode's `client.session.prompt(...)` SDK call routed through `hookSpecificOutput.additionalContext`). |
+| **Pi (pi-coding-agent)** | **Next user turn** | **Pi visibly stops** when the gate fires — its agent loop exits and you're returned to the prompt. The gate then fires the next time you submit a prompt: failproofai prepends a `MANDATORY ACTION REQUIRED` directive to that turn's system prompt, instructing the LLM to complete the workflow step (commit, push, etc.) before doing whatever you asked. |
+
+<Note>
+**Pi limitation.** Pi's `AgentEndEvent` (the upstream equivalent of Claude's `Stop` hook) has no Result type — by the time it fires, Pi's agent loop has already exited. Pi cannot be forced to retry the same loop the way Claude / Copilot / Cursor / OpenCode can. failproofai shifts the gate to Pi's `before_agent_start` event (which fires after the next user prompt) so the workflow check still enforces, just on the next turn rather than the current one.
+
+**What this means in practice:**
+
+- After Pi stops, the deny reason is captured in-memory keyed by Pi session id. The very next prompt you submit in the same Pi process drains it: the LLM sees the `MANDATORY ACTION REQUIRED` directive at the top of its system prompt, commits (or pushes / opens the PR / waits for CI), and only then continues with your request. The captured deny reason is one-shot — once drained, the gate is clear.
+- The gate is bounded by Pi's process lifetime. If you `Ctrl+C` Pi or quit between turns, the in-memory entry is dropped along with the process and the gate is missed. Claude, Copilot, Cursor, and OpenCode have the same bound (kill the agent and the gate is missed) — Pi just makes it more visible because the agent visibly exits before the gate fires.
+- A pending deny is also cleared on `session_shutdown` for any reason (`new` / `resume` / `fork` / `quit`), so a stale gate from a prior session cannot leak into a fresh session started in the same Pi process.
+
+If you need Claude-style same-loop retry, run your `Stop` policies under any of the other five supported CLIs. We are tracking Pi upstream for a future Result type on `AgentEndEvent` that would let us close this gap.
+</Note>
+
+### `require-commit-before-stop`
+
+**Event:** Stop  
+**Default:** Denies stopping when there are uncommitted changes (modified, staged, or untracked files). Returns an informational message when the working directory is clean.
+
+No parameters.
+
+---
+
+### `require-push-before-stop`
+
+**Event:** Stop  
+**Default:** Denies stopping when there are unpushed commits or when the current branch has no remote tracking branch. Suggests `git push -u` to create a tracking branch if needed. Fails open if no remote is configured.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `remote` | `string` | `"origin"` | Remote name to push to. |
+
+**Example:**
+
+```json
+{
+  "policyParams": {
+    "require-push-before-stop": {
+      "remote": "upstream"
+    }
+  }
+}
+```
+
+---
+
+### `require-pr-before-stop`
+
+**Event:** Stop  
+**Default:** Denies stopping when no pull request exists for the current branch, or when the existing PR is closed without merging. Instructs Claude to create a PR with `gh pr create`. When the PR is **merged**, the policy allows (the work has shipped) and the message hints to switch off the branch (`git checkout main && git pull`).
+
+No parameters.
+
+<Note>
+This policy requires [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated.
+Run `gh auth login` with a personal access token that has `repo` scope for read access to
+pull requests. If `gh` is not installed or not authenticated, the policy fails open and reports the reason to Claude.
+</Note>
+
+---
+
+### `require-no-conflicts-before-stop`
+
+**Event:** Stop  
+**Default:** Denies stopping when the current branch cannot cleanly merge into the base branch. The policy first confirms there is an `OPEN` PR on GitHub for the branch — without one, there is no merge target to enforce, so the entire policy short-circuits to allow. Once an `OPEN` PR is confirmed, two independent probes run:
+
+1. **Local** — `git merge-tree --write-tree --name-only origin/<baseBranch> HEAD`. On conflict, the deny message names the conflicted files so Claude knows exactly what to resolve.
+2. **GitHub** — reuses the `gh pr view --json mergeable,state` result already fetched in the precheck. Catches conflicts that a stale local `origin/<baseBranch>` would miss (e.g. someone landed a conflicting PR on `main` since the last fetch). A `CONFLICTING` result denies. An `UNKNOWN` result also denies and instructs Claude to wait ~10 seconds and re-check before attempting to stop again — this prevents false negatives while GitHub recomputes.
+
+Skips entirely (allows) when: `gh` is not installed, no PR exists for the branch, the PR's state is not `OPEN` (e.g. `MERGED`, `CLOSED`), or `gh pr view` returns unparseable output. Also fails open when `origin/<baseBranch>` is missing locally or when no commits are ahead of base — those Layer 1 fall-throughs still consult the cached PR mergeability before allowing.
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `baseBranch` | `string` | `"main"` | Base branch to check for conflicts against. |
+
+<Note>
+GitHub CLI (`gh`) is required for this policy. The policy uses `gh pr view` to confirm
+an `OPEN` PR exists before running any conflict probe — without `gh`, the policy
+short-circuits to allow. Run `gh auth login` with a personal access token that has
+`repo` scope for read access to pull requests.
+</Note>
+
+---
+
+### `require-ci-green-before-stop`
+
+**Event:** Stop  
+**Default:** Denies stopping when CI checks are failing or still running on the current branch. Checks both GitHub Actions workflow runs and third-party bot checks (e.g. CodeRabbit, SonarCloud, Codecov). Treats `skipped`, `cancelled`, and `neutral` conclusions as non-failing (the latter covers e.g. Socket Security alerts on outside contributor PRs, where the app intentionally reports neutral rather than success/failure). Returns an informational message when all checks pass.
+
+No parameters.
+
+<Note>
+This policy requires [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated.
+Run `gh auth login` with a personal access token that has `repo` scope for read access to
+Actions workflow runs and the Checks API. If `gh` is not installed or not authenticated, the policy fails open and reports the reason to Claude.
+</Note>
+
+---
+
+---
+
+## Disabling individual policies
+
+Remove a specific policy from `enabledPolicies` in your config, or toggle it off in the dashboard's Policies tab.
+
+```json
+{
+  "enabledPolicies": [
+    "block-rm-rf",
+    "sanitize-api-keys"
+  ]
+}
+```
+
+Policies not listed in `enabledPolicies` do not run, even if `policyParams` entries exist for them.

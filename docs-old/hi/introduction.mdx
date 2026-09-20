@@ -1,0 +1,58 @@
+---
+---
+title: "Failproof AI"
+description: "FailproofAI आपके AI agents को 39 built-in failure policies देता है जो एक ही install में loops, secret leaks, destructive tool calls और बहुत कुछ को पकड़ते हैं।"
+---
+
+[![npm weekly downloads](https://img.shields.io/npm/dw/failproofai?style=flat-square&color=2ea44f)](https://www.npmjs.com/package/failproofai)
+
+**AI failure handling**, **error recovery**, और **LLM reliability** के लिए Hooks और policies। अपने AI agents को **Claude Code**, **OpenAI Codex**, **GitHub Copilot**, **Cursor Agent**, **OpenCode**, **Pi**, **Hermes**, **OpenClaw**, **Factory Droid**, **Devin CLI**, **Antigravity CLI**, और **Agents SDK** पर विश्वसनीय और स्वायत्त रूप से चलता रहें।
+
+AI agents पूर्वानुमानित तरीकों से विफल होते हैं। वे विनाशकारी commands चलाते हैं, secrets लीक करते हैं, task से भटकते हैं, loops में फंस जाते हैं, या सीधे main में push करते हैं। अगर बिना निरीक्षण के छोड़ दिए जाएं, तो छोटी failures बड़े outages, लीक किए गए credentials और खोए हुए काम में बदल जाती हैं।
+
+FailproofAI इसे **policies** के साथ हल करता है। ये rules हर agent tool call में hook करते हैं ताकि **failures को detect** करें, **उन्हें mitigate** करें (block, instruct, sanitize), और जब कुछ attention की जरूरत हो तो **आपको alert** करें। एक local dashboard आपको afterward में हर tool call, agent failure और recovery action को review करने देता है।
+
+Transcripts और policy evaluation आपकी machine पर रहते हैं। Data सिर्फ तब भेजा जाता है जब आप explicitly किसी online feature का उपयोग करते हैं, जैसे authenticated audit reminders या invitations।
+
+## शुरुआत करें
+
+<CardGroup cols={2}>
+
+<Card title="39 built-in policies" icon="shield" href="/hi/built-in-policies">
+  विनाशकारी commands को block करें, secret leakage को रोकें, agents को project boundaries के अंदर रखें, और बहुत कुछ। सब कुछ बॉक्स से बाहर।
+</Card>
+
+<Card title="Custom policies" icon="code" href="/hi/custom-policies">
+  JavaScript में अपने खुद के rules लिखें एक simple allow / deny / instruct API के साथ।
+</Card>
+
+<Card title="Agent monitor" icon="chart-line" href="/hi/dashboard">
+  देखें कि आपके agents ने आपके दूर रहने के दौरान क्या किया। Sessions browse करें, tool calls को inspect करें, उन जगहों को review करें जहां policies fired हुई।
+</Card>
+
+<Card title="Easy configuration" icon="gear" href="/hi/configuration">
+  किसी भी policy को बिना code के tune करें। Per-project या globally allowlists, protected branches, या thresholds set करें।
+</Card>
+
+</CardGroup>
+
+## त्वरित शुरुआत
+
+<CodeGroup>
+
+```bash npm
+npm install -g failproofai
+```
+
+```bash bun
+bun add -g failproofai
+```
+
+</CodeGroup>
+
+```bash
+failproofai policies --install   # policies enable करें (या skip करें — `failproofai` पहली run पर उन्हें set करने का offer देगा)
+failproofai                      # dashboard launch करें
+```
+
+पूर्ण walkthrough के लिए [Getting started](/hi/getting-started) guide देखें।

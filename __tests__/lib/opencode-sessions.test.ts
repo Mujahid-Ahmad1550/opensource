@@ -1,0 +1,408 @@
+// @vitest-environment node
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// The seam is the DB module: these read opencode's SQLite file directly now.
+// `lib/opencode-db.ts` is covered against a real database in
+// opencode-db.test.ts; here it is stubbed so the message/part translation
+// below is tested on canned rows, as it was when the seam was execFileSync.
+vi.mock("@/lib/opencode-db", () => ({
+  withOpenCodeDb: vi.fn(),
+  queryOpenCodeDb: vi.fn(),
+}));
+
+vi.mock("@/lib/runtime-cache", () => ({
+  runtimeCache: vi.fn(<T extends (...args: unknown[]) => unknown>(fn: T) => fn),
+}));
+
+import { withOpenCodeDb } from "@/lib/opencode-db";
+import type { SqliteReader } from "@/lib/sqlite-reader";
+import { getOpenCodeSessionLog, getOpenCodeSessionExport } from "@/lib/opencode-sessions";
+
+const mockWith = vi.mocked(withOpenCodeDb);
+
+/** Every SQL string the code under test ran, with its bound parameters. */
+let executed: Array<{ sql: string; params: unknown[] }> = [];
+
+beforeEach(() => {
+  mockWith.mockReset();
+  executed = [];
+});
+
+/**
+ * Canned rows for the three tables, dispatched by the table each query names.
+ *
+ * Call sites pass `[session, messages, parts]` — the order the three queries
+ * used to be fired in, when each was its own subprocess. They are now issued
+ * from a single open, so nothing guarantees that order stays; reading the
+ * table out of the SQL keeps these tests describing WHAT each row set is.
+ */
+function mockQueries(rows: Array<unknown[]>) {
+  const [session = [], messages = [], parts = []] = rows;
+  const rowsFor = (sql: string): unknown[] =>
+    /\bFROM\s+session\b/i.test(sql) ? session
+      : /\bFROM\s+message\b/i.test(sql) ? messages
+        : parts;
+  const db: SqliteReader = {
+    query: <T,>(sql: string, params: unknown[] = []) => {
+      executed.push({ sql, params });
+      return rowsFor(sql) as T[];
+    },
+    close: () => {},
+  };
+  mockWith.mockImplementation(async (fn: (d: SqliteReader) => unknown) => fn(db) as never);
+}
+
+/** The database is unreadable. */
+function mockDbUnavailable() {
+  mockWith.mockImplementation(async () => null as never);
+}
+
+/** The session row loads, but the message and part queries blow up. */
+function mockSessionOkRestFails(sessionRow: unknown) {
+  const db: SqliteReader = {
+    query: <T,>(sql: string, params: unknown[] = []) => {
+      executed.push({ sql, params });
+      if (/\bFROM\s+session\b/i.test(sql)) return [sessionRow] as T[];
+      throw new Error("db locked");
+    },
+    close: () => {},
+  };
+  mockWith.mockImplementation(async (fn: (d: SqliteReader) => unknown) => fn(db) as never);
+}
+
+describe("getOpenCodeSessionLog", () => {
+  it("returns null for an unknown session id", async () => {
+    mockQueries([[]]); // empty session select
+    expect(await getOpenCodeSessionLog("ses_unknown")).toBeNull();
+  });
+
+  it("returns null for a non-matching id pattern (SQL-injection guard)", async () => {
+    expect(await getOpenCodeSessionLog("'; DROP TABLE session; --")).toBeNull();
+    // Not even worth opening the database for.
+    expect(mockWith).not.toHaveBeenCalled();
+  });
+
+  it("returns null when binary is missing", async () => {
+    mockDbUnavailable();
+    expect(await getOpenCodeSessionLog("ses_abc")).toBeNull();
+  });
+
+  it("parses a user message with a single text part", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "user" }) }],
+      [{ id: "prt_1", message_id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ type: "text", text: "hello" }) }],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    expect(log).not.toBeNull();
+    expect(log!.cwd).toBe("/repo");
+    expect(log!.entries).toHaveLength(1);
+    const entry = log!.entries[0] as { type: string; message: { role: string; content: string } };
+    expect(entry.type).toBe("user");
+    expect(entry.message.role).toBe("user");
+    expect(entry.message.content).toBe("hello");
+  });
+
+  it("parses an assistant message with text + tool_use parts (state.input/output shape)", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "assistant", model: { providerID: "anthropic", modelID: "claude-sonnet-4" } }) }],
+      [
+        { id: "prt_a", message_id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ type: "text", text: "Running ls" }) },
+        {
+          id: "prt_b", message_id: "msg_1", session_id: "ses_x", time_created: 1101, time_updated: 1150,
+          data: JSON.stringify({
+            type: "tool",
+            tool: "bash",
+            callID: "c1",
+            state: {
+              status: "completed",
+              input: { command: "ls" },
+              output: "file1\nfile2",
+              time: { start: 1100, end: 1150 },
+            },
+          }),
+        },
+      ],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    expect(log).not.toBeNull();
+    const entry = log!.entries[0] as {
+      type: string;
+      message: {
+        role: string;
+        content: Array<{
+          type: string; text?: string; name?: string;
+          input?: Record<string, unknown>;
+          result?: { content?: string; durationMs?: number };
+        }>;
+        model?: string;
+      };
+    };
+    expect(entry.type).toBe("assistant");
+    expect(entry.message.role).toBe("assistant");
+    expect(entry.message.model).toBe("claude-sonnet-4");
+    expect(entry.message.content).toHaveLength(2);
+    expect(entry.message.content[0]).toMatchObject({ type: "text", text: "Running ls" });
+    expect(entry.message.content[1]).toMatchObject({
+      type: "tool_use",
+      name: "bash",
+      input: { command: "ls" },
+      result: { content: "file1\nfile2", durationMs: 50 },
+    });
+  });
+
+  it("emits tool_use without result for in-flight (status=running) tool calls", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "assistant" }) }],
+      [
+        {
+          id: "prt_b", message_id: "msg_1", session_id: "ses_x", time_created: 1101, time_updated: 1101,
+          data: JSON.stringify({
+            type: "tool", tool: "read", callID: "c1",
+            state: { status: "running", input: { filePath: "/repo/x" } },
+          }),
+        },
+      ],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    const entry = log!.entries[0] as { message: { content: Array<{ type: string; name?: string; input?: Record<string, unknown>; result?: unknown }> } };
+    expect(entry.message.content).toHaveLength(1);
+    expect(entry.message.content[0]).toMatchObject({ type: "tool_use", name: "read", input: { filePath: "/repo/x" } });
+    expect(entry.message.content[0].result).toBeUndefined();
+  });
+
+  it("surfaces state.error as result.content when status=error", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "assistant" }) }],
+      [
+        {
+          id: "prt_b", message_id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1110,
+          data: JSON.stringify({
+            type: "tool", tool: "bash", callID: "c1",
+            state: {
+              status: "error",
+              input: { command: "false" },
+              output: "ignored when error is set",
+              error: "exit code 1",
+              time: { start: 1100, end: 1110 },
+            },
+          }),
+        },
+      ],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    const entry = log!.entries[0] as { message: { content: Array<{ result?: { content?: string } }> } };
+    expect(entry.message.content[0].result?.content).toBe("exit code 1");
+  });
+
+  it("falls back to state.output when status=error but state.error is missing", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "assistant" }) }],
+      [
+        {
+          id: "prt_b", message_id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1110,
+          data: JSON.stringify({
+            type: "tool", tool: "bash",
+            state: { status: "error", input: {}, output: "boom", time: { start: 1100, end: 1110 } },
+          }),
+        },
+      ],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    const entry = log!.entries[0] as { message: { content: Array<{ result?: { content?: string } }> } };
+    expect(entry.message.content[0].result?.content).toBe("boom");
+  });
+
+  it("legacy back-compat: top-level data.input still populates tool_use.input", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "assistant" }) }],
+      [
+        {
+          id: "prt_b", message_id: "msg_1", session_id: "ses_x", time_created: 1101, time_updated: 1101,
+          data: JSON.stringify({ type: "tool", tool: "bash", input: { command: "ls" } }),
+        },
+      ],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    const entry = log!.entries[0] as { message: { content: Array<{ name?: string; input?: Record<string, unknown>; result?: unknown }> } };
+    expect(entry.message.content[0]).toMatchObject({ name: "bash", input: { command: "ls" } });
+    expect(entry.message.content[0].result).toBeUndefined();
+  });
+
+  it("regression: real opencode v1.14.x `read` part shape (input + output captured)", async () => {
+    // Captured live from opencode v1.14.41 — see luv-322 plan.
+    const realPartData = {
+      type: "tool",
+      tool: "read",
+      callID: "call_function_8o31jcbnw410_1",
+      state: {
+        status: "completed",
+        input: { filePath: "/home/nivedit/dev-purge" },
+        output: "<path>/home/nivedit/dev-purge</path>\n<type>directory</type>\n<entries>\nsrc/\n</entries>",
+        metadata: { preview: "src/", truncated: false, loaded: [] },
+        title: "",
+        time: { start: 1778280369088, "end": 1778280369140 },
+      },
+    };
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "assistant" }) }],
+      [
+        {
+          id: "prt_real", message_id: "msg_1", session_id: "ses_x",
+          time_created: 1778280369088, time_updated: 1778280369140,
+          data: JSON.stringify(realPartData),
+        },
+      ],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    const entry = log!.entries[0] as {
+      message: {
+        content: Array<{
+          type: string; name?: string;
+          input?: Record<string, unknown>;
+          result?: { content?: string; durationMs?: number };
+        }>;
+      };
+    };
+    expect(entry.message.content[0]).toMatchObject({
+      type: "tool_use",
+      name: "read",
+      input: { filePath: "/home/nivedit/dev-purge" },
+      result: { durationMs: 52 },
+    });
+    expect(entry.message.content[0].result?.content).toContain("<entries>");
+  });
+
+  it("preserves unknown part types as a labeled text annotation (no silent drops)", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "assistant" }) }],
+      [{ id: "prt_unknown", message_id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ type: "step-start" }) }],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    const entry = log!.entries[0] as { message: { content: Array<{ type: string; text?: string }> } };
+    expect(entry.message.content).toHaveLength(1);
+    expect(entry.message.content[0].type).toBe("text");
+    expect(entry.message.content[0].text).toContain("step-start");
+  });
+
+  it("treats non-string text content as empty (luv-245 defense)", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "user" }) }],
+      [{ id: "prt_1", message_id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ type: "text", text: { unexpected: "object" } }) }],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    const entry = log!.entries[0] as { message: { content: string } };
+    expect(entry.message.content).toBe("");
+  });
+
+  it("falls through to a system entry for unknown role values", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [{ id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "tool" }) }],
+      [{ id: "prt_1", message_id: "msg_1", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ type: "text", text: "hi" }) }],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    const entry = log!.entries[0] as { type: string };
+    expect(entry.type).toBe("system");
+  });
+
+  it("returns empty entries[] when the session exists but has no messages", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: null, time_created: 1000, time_updated: 1000 }],
+      [],
+      [],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    expect(log).not.toBeNull();
+    expect(log!.entries).toEqual([]);
+    expect(log!.cwd).toBe("/repo");
+  });
+
+  it("returns null when the messages query fails after a successful session lookup", async () => {
+    mockSessionOkRestFails({ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 });
+    const log = await getOpenCodeSessionLog("ses_x");
+    expect(log).not.toBeNull();
+    expect(log!.entries).toEqual([]);
+  });
+
+  it("groups parts by message_id (multiple messages, multiple parts each)", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [
+        { id: "msg_a", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ role: "user" }) },
+        { id: "msg_b", session_id: "ses_x", time_created: 1200, time_updated: 1200, data: JSON.stringify({ role: "assistant" }) },
+      ],
+      [
+        { id: "prt_a1", message_id: "msg_a", session_id: "ses_x", time_created: 1100, time_updated: 1100, data: JSON.stringify({ type: "text", text: "hi" }) },
+        { id: "prt_b1", message_id: "msg_b", session_id: "ses_x", time_created: 1200, time_updated: 1200, data: JSON.stringify({ type: "text", text: "hello back" }) },
+      ],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    expect(log!.entries).toHaveLength(2);
+    const userEntry = log!.entries[0] as { type: string; message: { content: string } };
+    const asstEntry = log!.entries[1] as { type: string; message: { content: Array<{ text?: string }> } };
+    expect(userEntry.type).toBe("user");
+    expect(userEntry.message.content).toBe("hi");
+    expect(asstEntry.type).toBe("assistant");
+    expect(asstEntry.message.content[0].text).toBe("hello back");
+  });
+
+  it("the synthetic filePath is opencode://<id>", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: "x", directory: "/repo", title: "X", time_created: 1000, time_updated: 1000 }],
+      [],
+      [],
+    ]);
+    const log = await getOpenCodeSessionLog("ses_x");
+    expect(log!.filePath).toBe("opencode://ses_x");
+  });
+});
+
+describe("getOpenCodeSessionExport", () => {
+  it("preserves the SQLite session/message/part structure with JSON data columns parsed", async () => {
+    const sessionRow = { id: "ses_x", project_id: "p1", slug: null, directory: "/repo", title: "T", time_created: 1, time_updated: 2 };
+    const messageRow = { id: "m1", session_id: "ses_x", time_created: 1, time_updated: 1, data: JSON.stringify({ role: "user" }) };
+    const partRow = { id: "p1", message_id: "m1", session_id: "ses_x", time_created: 1, time_updated: 1, data: JSON.stringify({ type: "text", text: "hi" }) };
+    mockQueries([[sessionRow], [messageRow], [partRow]]);
+    const result = await getOpenCodeSessionExport("ses_x");
+    expect(result).toEqual({
+      session: sessionRow,
+      messages: [{ ...messageRow, data: { role: "user" } }],
+      parts: [{ ...partRow, data: { type: "text", text: "hi" } }],
+    });
+  });
+
+  it("leaves malformed JSON in the data column as the raw string", async () => {
+    mockQueries([
+      [{ id: "ses_x", project_id: "p1", slug: null, directory: "/repo", title: "T", time_created: 1, time_updated: 2 }],
+      [{ id: "m1", session_id: "ses_x", time_created: 1, time_updated: 1, data: "{not-valid-json" }],
+      [],
+    ]);
+    const result = await getOpenCodeSessionExport("ses_x");
+    expect(result!.messages[0].data).toBe("{not-valid-json");
+  });
+
+  it("returns null for an unknown session id", async () => {
+    mockQueries([[]]);
+    expect(await getOpenCodeSessionExport("ses_unknown")).toBeNull();
+  });
+
+  it("returns null for SQL-injection-shaped input without calling the binary", async () => {
+    mockWith.mockReset();
+    expect(await getOpenCodeSessionExport("'; DROP TABLE session; --")).toBeNull();
+    expect(mockWith).not.toHaveBeenCalled();
+  });
+
+  it("returns null when a follow-up message/part query fails (rather than serving an empty export)", async () => {
+    mockSessionOkRestFails({ id: "ses_x", project_id: "p1", slug: null, directory: "/repo", title: "T", time_created: 1, time_updated: 2 });
+    expect(await getOpenCodeSessionExport("ses_x")).toBeNull();
+  });
+});

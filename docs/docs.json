@@ -1,0 +1,3067 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "palm",
+  "name": "Failproof AI",
+  "description": "Trace agent behavior, find failures with audits, and prevent repeat failures with deployed policies.",
+  "colors": {
+    "primary": "#c92251",
+    "light": "#e4587d",
+    "dark": "#e4587d"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "logo": {
+    "light": "/logo/Failproof_AI_logo_light.png",
+    "dark": "/logo/Failproof_AI_logo.png",
+    "href": "https://befailproof.ai"
+  },
+  "favicon": "/favicon.ico",
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "assistant",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
+  },
+  "search": {
+    "prompt": "Search Failproof AI docs"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "",
+        "href": "https://discord.befailproof.ai",
+        "icon": "discord"
+      },
+      {
+        "label": "",
+        "href": "https://www.reddit.com/r/failproofai/",
+        "icon": "reddit"
+      },
+      {
+        "label": "",
+        "href": "https://x.com/failproofai",
+        "icon": "x-twitter"
+      },
+      {
+        "label": "⭐ 1.5k",
+        "href": "https://github.com/FailproofAI/failproofai",
+        "icon": "github"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Dashboard",
+      "href": "https://app.befailproof.ai"
+    }
+  },
+  "navigation": {
+    "languages": [
+      {
+        "language": "en",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "index",
+                  "start/quickstart",
+                  "reference/harnesses",
+                  "sessions/assistant",
+                  "start/first-audit",
+                  "start/first-policy",
+                  "start/setup",
+                  "start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "start/quickstarts/custom-agents",
+                      "start/quickstarts/langchain",
+                      "start/quickstarts/crewai",
+                      "start/quickstarts/llamaindex",
+                      "start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "sessions/overview",
+                  "sessions/live-events",
+                  "sessions/read-a-trace",
+                  "sessions/models",
+                  "sessions/hooks",
+                  "sessions/policy-decisions",
+                  "sessions/tools",
+                  "sessions/errors",
+                  "sessions/metrics",
+                  "sessions/dashboards",
+                  "sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "start/integrations",
+                  "start/integrations/custom-agents",
+                  "start/integrations/langchain",
+                  "start/integrations/crewai",
+                  "start/integrations/llamaindex",
+                  "start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "evaluations/overview",
+                  "evaluations/write",
+                  "evaluations/test",
+                  "evaluations/deploy",
+                  "sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "audits/overview",
+                  "audits/local-audit",
+                  "audits/setup",
+                  "audits/agent-contracts",
+                  "audits/run",
+                  "audits/cadence",
+                  "audits/findings-and-issues",
+                  "audits/alerts",
+                  "audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "policies/editor",
+                  "policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "policies/test",
+                  "policies/deploy",
+                  "policies/rollback",
+                  "policies/publish-a-pack",
+                  "policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "admin/overview",
+                  "admin/usage",
+                  "admin/keys-and-permissions",
+                  "admin/users-and-organizations",
+                  "admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "reference/overview",
+                  "reference/harnesses",
+                  "reference/custom-agents",
+                  "reference/evaluator-sdk",
+                  "reference/policy-sdk",
+                  "reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "reference/failproof-cli",
+                  "reference/local-dashboard",
+                  "policies/local-configuration",
+                  "reference/cloud-cli",
+                  "reference/http-api",
+                  "reference/events-and-configuration",
+                  "reference/troubleshooting"
+                ]
+              },
+              {
+                "group": "HTTP API",
+                "expanded": false,
+                "openapi": "reference/openapi.json",
+                "pages": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "zh",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "zh/index",
+                  "zh/start/quickstart",
+                  "zh/reference/harnesses",
+                  "zh/sessions/assistant",
+                  "zh/start/first-audit",
+                  "zh/start/first-policy",
+                  "zh/start/setup",
+                  "zh/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "zh/start/quickstarts/custom-agents",
+                      "zh/start/quickstarts/langchain",
+                      "zh/start/quickstarts/crewai",
+                      "zh/start/quickstarts/llamaindex",
+                      "zh/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "zh/sessions/overview",
+                  "zh/sessions/live-events",
+                  "zh/sessions/read-a-trace",
+                  "zh/sessions/models",
+                  "zh/sessions/hooks",
+                  "zh/sessions/policy-decisions",
+                  "zh/sessions/tools",
+                  "zh/sessions/errors",
+                  "zh/sessions/metrics",
+                  "zh/sessions/dashboards",
+                  "zh/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "zh/start/integrations",
+                  "zh/start/integrations/custom-agents",
+                  "zh/start/integrations/langchain",
+                  "zh/start/integrations/crewai",
+                  "zh/start/integrations/llamaindex",
+                  "zh/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "zh/evaluations/overview",
+                  "zh/evaluations/write",
+                  "zh/evaluations/test",
+                  "zh/evaluations/deploy",
+                  "zh/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "zh/audits/overview",
+                  "zh/audits/local-audit",
+                  "zh/audits/setup",
+                  "zh/audits/agent-contracts",
+                  "zh/audits/run",
+                  "zh/audits/cadence",
+                  "zh/audits/findings-and-issues",
+                  "zh/audits/alerts",
+                  "zh/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "zh/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "zh/policies/editor",
+                  "zh/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "zh/policies/test",
+                  "zh/policies/deploy",
+                  "zh/policies/rollback",
+                  "zh/policies/publish-a-pack",
+                  "zh/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "zh/admin/overview",
+                  "zh/admin/usage",
+                  "zh/admin/keys-and-permissions",
+                  "zh/admin/users-and-organizations",
+                  "zh/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "zh/reference/overview",
+                  "zh/reference/harnesses",
+                  "zh/reference/custom-agents",
+                  "zh/reference/evaluator-sdk",
+                  "zh/reference/policy-sdk",
+                  "zh/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "zh/reference/failproof-cli",
+                  "zh/reference/local-dashboard",
+                  "zh/policies/local-configuration",
+                  "zh/reference/cloud-cli",
+                  "zh/reference/http-api",
+                  "zh/reference/events-and-configuration",
+                  "zh/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "ja",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "ja/index",
+                  "ja/start/quickstart",
+                  "ja/reference/harnesses",
+                  "ja/sessions/assistant",
+                  "ja/start/first-audit",
+                  "ja/start/first-policy",
+                  "ja/start/setup",
+                  "ja/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "ja/start/quickstarts/custom-agents",
+                      "ja/start/quickstarts/langchain",
+                      "ja/start/quickstarts/crewai",
+                      "ja/start/quickstarts/llamaindex",
+                      "ja/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "ja/sessions/overview",
+                  "ja/sessions/live-events",
+                  "ja/sessions/read-a-trace",
+                  "ja/sessions/models",
+                  "ja/sessions/hooks",
+                  "ja/sessions/policy-decisions",
+                  "ja/sessions/tools",
+                  "ja/sessions/errors",
+                  "ja/sessions/metrics",
+                  "ja/sessions/dashboards",
+                  "ja/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "ja/start/integrations",
+                  "ja/start/integrations/custom-agents",
+                  "ja/start/integrations/langchain",
+                  "ja/start/integrations/crewai",
+                  "ja/start/integrations/llamaindex",
+                  "ja/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "ja/evaluations/overview",
+                  "ja/evaluations/write",
+                  "ja/evaluations/test",
+                  "ja/evaluations/deploy",
+                  "ja/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "ja/audits/overview",
+                  "ja/audits/local-audit",
+                  "ja/audits/setup",
+                  "ja/audits/agent-contracts",
+                  "ja/audits/run",
+                  "ja/audits/cadence",
+                  "ja/audits/findings-and-issues",
+                  "ja/audits/alerts",
+                  "ja/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "ja/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "ja/policies/editor",
+                  "ja/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "ja/policies/test",
+                  "ja/policies/deploy",
+                  "ja/policies/rollback",
+                  "ja/policies/publish-a-pack",
+                  "ja/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "ja/admin/overview",
+                  "ja/admin/usage",
+                  "ja/admin/keys-and-permissions",
+                  "ja/admin/users-and-organizations",
+                  "ja/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "ja/reference/overview",
+                  "ja/reference/harnesses",
+                  "ja/reference/custom-agents",
+                  "ja/reference/evaluator-sdk",
+                  "ja/reference/policy-sdk",
+                  "ja/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "ja/reference/failproof-cli",
+                  "ja/reference/local-dashboard",
+                  "ja/policies/local-configuration",
+                  "ja/reference/cloud-cli",
+                  "ja/reference/http-api",
+                  "ja/reference/events-and-configuration",
+                  "ja/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "ko",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "ko/index",
+                  "ko/start/quickstart",
+                  "ko/reference/harnesses",
+                  "ko/sessions/assistant",
+                  "ko/start/first-audit",
+                  "ko/start/first-policy",
+                  "ko/start/setup",
+                  "ko/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "ko/start/quickstarts/custom-agents",
+                      "ko/start/quickstarts/langchain",
+                      "ko/start/quickstarts/crewai",
+                      "ko/start/quickstarts/llamaindex",
+                      "ko/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "ko/sessions/overview",
+                  "ko/sessions/live-events",
+                  "ko/sessions/read-a-trace",
+                  "ko/sessions/models",
+                  "ko/sessions/hooks",
+                  "ko/sessions/policy-decisions",
+                  "ko/sessions/tools",
+                  "ko/sessions/errors",
+                  "ko/sessions/metrics",
+                  "ko/sessions/dashboards",
+                  "ko/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "ko/start/integrations",
+                  "ko/start/integrations/custom-agents",
+                  "ko/start/integrations/langchain",
+                  "ko/start/integrations/crewai",
+                  "ko/start/integrations/llamaindex",
+                  "ko/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "ko/evaluations/overview",
+                  "ko/evaluations/write",
+                  "ko/evaluations/test",
+                  "ko/evaluations/deploy",
+                  "ko/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "ko/audits/overview",
+                  "ko/audits/local-audit",
+                  "ko/audits/setup",
+                  "ko/audits/agent-contracts",
+                  "ko/audits/run",
+                  "ko/audits/cadence",
+                  "ko/audits/findings-and-issues",
+                  "ko/audits/alerts",
+                  "ko/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "ko/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "ko/policies/editor",
+                  "ko/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "ko/policies/test",
+                  "ko/policies/deploy",
+                  "ko/policies/rollback",
+                  "ko/policies/publish-a-pack",
+                  "ko/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "ko/admin/overview",
+                  "ko/admin/usage",
+                  "ko/admin/keys-and-permissions",
+                  "ko/admin/users-and-organizations",
+                  "ko/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "ko/reference/overview",
+                  "ko/reference/harnesses",
+                  "ko/reference/custom-agents",
+                  "ko/reference/evaluator-sdk",
+                  "ko/reference/policy-sdk",
+                  "ko/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "ko/reference/failproof-cli",
+                  "ko/reference/local-dashboard",
+                  "ko/policies/local-configuration",
+                  "ko/reference/cloud-cli",
+                  "ko/reference/http-api",
+                  "ko/reference/events-and-configuration",
+                  "ko/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "es",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "es/index",
+                  "es/start/quickstart",
+                  "es/reference/harnesses",
+                  "es/sessions/assistant",
+                  "es/start/first-audit",
+                  "es/start/first-policy",
+                  "es/start/setup",
+                  "es/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "es/start/quickstarts/custom-agents",
+                      "es/start/quickstarts/langchain",
+                      "es/start/quickstarts/crewai",
+                      "es/start/quickstarts/llamaindex",
+                      "es/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "es/sessions/overview",
+                  "es/sessions/live-events",
+                  "es/sessions/read-a-trace",
+                  "es/sessions/models",
+                  "es/sessions/hooks",
+                  "es/sessions/policy-decisions",
+                  "es/sessions/tools",
+                  "es/sessions/errors",
+                  "es/sessions/metrics",
+                  "es/sessions/dashboards",
+                  "es/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "es/start/integrations",
+                  "es/start/integrations/custom-agents",
+                  "es/start/integrations/langchain",
+                  "es/start/integrations/crewai",
+                  "es/start/integrations/llamaindex",
+                  "es/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "es/evaluations/overview",
+                  "es/evaluations/write",
+                  "es/evaluations/test",
+                  "es/evaluations/deploy",
+                  "es/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "es/audits/overview",
+                  "es/audits/local-audit",
+                  "es/audits/setup",
+                  "es/audits/agent-contracts",
+                  "es/audits/run",
+                  "es/audits/cadence",
+                  "es/audits/findings-and-issues",
+                  "es/audits/alerts",
+                  "es/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "es/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "es/policies/editor",
+                  "es/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "es/policies/test",
+                  "es/policies/deploy",
+                  "es/policies/rollback",
+                  "es/policies/publish-a-pack",
+                  "es/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "es/admin/overview",
+                  "es/admin/usage",
+                  "es/admin/keys-and-permissions",
+                  "es/admin/users-and-organizations",
+                  "es/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "es/reference/overview",
+                  "es/reference/harnesses",
+                  "es/reference/custom-agents",
+                  "es/reference/evaluator-sdk",
+                  "es/reference/policy-sdk",
+                  "es/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "es/reference/failproof-cli",
+                  "es/reference/local-dashboard",
+                  "es/policies/local-configuration",
+                  "es/reference/cloud-cli",
+                  "es/reference/http-api",
+                  "es/reference/events-and-configuration",
+                  "es/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "pt-BR",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "pt-br/index",
+                  "pt-br/start/quickstart",
+                  "pt-br/reference/harnesses",
+                  "pt-br/sessions/assistant",
+                  "pt-br/start/first-audit",
+                  "pt-br/start/first-policy",
+                  "pt-br/start/setup",
+                  "pt-br/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "pt-br/start/quickstarts/custom-agents",
+                      "pt-br/start/quickstarts/langchain",
+                      "pt-br/start/quickstarts/crewai",
+                      "pt-br/start/quickstarts/llamaindex",
+                      "pt-br/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "pt-br/sessions/overview",
+                  "pt-br/sessions/live-events",
+                  "pt-br/sessions/read-a-trace",
+                  "pt-br/sessions/models",
+                  "pt-br/sessions/hooks",
+                  "pt-br/sessions/policy-decisions",
+                  "pt-br/sessions/tools",
+                  "pt-br/sessions/errors",
+                  "pt-br/sessions/metrics",
+                  "pt-br/sessions/dashboards",
+                  "pt-br/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "pt-br/start/integrations",
+                  "pt-br/start/integrations/custom-agents",
+                  "pt-br/start/integrations/langchain",
+                  "pt-br/start/integrations/crewai",
+                  "pt-br/start/integrations/llamaindex",
+                  "pt-br/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "pt-br/evaluations/overview",
+                  "pt-br/evaluations/write",
+                  "pt-br/evaluations/test",
+                  "pt-br/evaluations/deploy",
+                  "pt-br/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "pt-br/audits/overview",
+                  "pt-br/audits/local-audit",
+                  "pt-br/audits/setup",
+                  "pt-br/audits/agent-contracts",
+                  "pt-br/audits/run",
+                  "pt-br/audits/cadence",
+                  "pt-br/audits/findings-and-issues",
+                  "pt-br/audits/alerts",
+                  "pt-br/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "pt-br/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "pt-br/policies/editor",
+                  "pt-br/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "pt-br/policies/test",
+                  "pt-br/policies/deploy",
+                  "pt-br/policies/rollback",
+                  "pt-br/policies/publish-a-pack",
+                  "pt-br/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "pt-br/admin/overview",
+                  "pt-br/admin/usage",
+                  "pt-br/admin/keys-and-permissions",
+                  "pt-br/admin/users-and-organizations",
+                  "pt-br/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "pt-br/reference/overview",
+                  "pt-br/reference/harnesses",
+                  "pt-br/reference/custom-agents",
+                  "pt-br/reference/evaluator-sdk",
+                  "pt-br/reference/policy-sdk",
+                  "pt-br/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "pt-br/reference/failproof-cli",
+                  "pt-br/reference/local-dashboard",
+                  "pt-br/policies/local-configuration",
+                  "pt-br/reference/cloud-cli",
+                  "pt-br/reference/http-api",
+                  "pt-br/reference/events-and-configuration",
+                  "pt-br/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "de",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "de/index",
+                  "de/start/quickstart",
+                  "de/reference/harnesses",
+                  "de/sessions/assistant",
+                  "de/start/first-audit",
+                  "de/start/first-policy",
+                  "de/start/setup",
+                  "de/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "de/start/quickstarts/custom-agents",
+                      "de/start/quickstarts/langchain",
+                      "de/start/quickstarts/crewai",
+                      "de/start/quickstarts/llamaindex",
+                      "de/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "de/sessions/overview",
+                  "de/sessions/live-events",
+                  "de/sessions/read-a-trace",
+                  "de/sessions/models",
+                  "de/sessions/hooks",
+                  "de/sessions/policy-decisions",
+                  "de/sessions/tools",
+                  "de/sessions/errors",
+                  "de/sessions/metrics",
+                  "de/sessions/dashboards",
+                  "de/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "de/start/integrations",
+                  "de/start/integrations/custom-agents",
+                  "de/start/integrations/langchain",
+                  "de/start/integrations/crewai",
+                  "de/start/integrations/llamaindex",
+                  "de/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "de/evaluations/overview",
+                  "de/evaluations/write",
+                  "de/evaluations/test",
+                  "de/evaluations/deploy",
+                  "de/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "de/audits/overview",
+                  "de/audits/local-audit",
+                  "de/audits/setup",
+                  "de/audits/agent-contracts",
+                  "de/audits/run",
+                  "de/audits/cadence",
+                  "de/audits/findings-and-issues",
+                  "de/audits/alerts",
+                  "de/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "de/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "de/policies/editor",
+                  "de/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "de/policies/test",
+                  "de/policies/deploy",
+                  "de/policies/rollback",
+                  "de/policies/publish-a-pack",
+                  "de/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "de/admin/overview",
+                  "de/admin/usage",
+                  "de/admin/keys-and-permissions",
+                  "de/admin/users-and-organizations",
+                  "de/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "de/reference/overview",
+                  "de/reference/harnesses",
+                  "de/reference/custom-agents",
+                  "de/reference/evaluator-sdk",
+                  "de/reference/policy-sdk",
+                  "de/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "de/reference/failproof-cli",
+                  "de/reference/local-dashboard",
+                  "de/policies/local-configuration",
+                  "de/reference/cloud-cli",
+                  "de/reference/http-api",
+                  "de/reference/events-and-configuration",
+                  "de/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "fr",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "fr/index",
+                  "fr/start/quickstart",
+                  "fr/reference/harnesses",
+                  "fr/sessions/assistant",
+                  "fr/start/first-audit",
+                  "fr/start/first-policy",
+                  "fr/start/setup",
+                  "fr/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "fr/start/quickstarts/custom-agents",
+                      "fr/start/quickstarts/langchain",
+                      "fr/start/quickstarts/crewai",
+                      "fr/start/quickstarts/llamaindex",
+                      "fr/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "fr/sessions/overview",
+                  "fr/sessions/live-events",
+                  "fr/sessions/read-a-trace",
+                  "fr/sessions/models",
+                  "fr/sessions/hooks",
+                  "fr/sessions/policy-decisions",
+                  "fr/sessions/tools",
+                  "fr/sessions/errors",
+                  "fr/sessions/metrics",
+                  "fr/sessions/dashboards",
+                  "fr/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "fr/start/integrations",
+                  "fr/start/integrations/custom-agents",
+                  "fr/start/integrations/langchain",
+                  "fr/start/integrations/crewai",
+                  "fr/start/integrations/llamaindex",
+                  "fr/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "fr/evaluations/overview",
+                  "fr/evaluations/write",
+                  "fr/evaluations/test",
+                  "fr/evaluations/deploy",
+                  "fr/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "fr/audits/overview",
+                  "fr/audits/local-audit",
+                  "fr/audits/setup",
+                  "fr/audits/agent-contracts",
+                  "fr/audits/run",
+                  "fr/audits/cadence",
+                  "fr/audits/findings-and-issues",
+                  "fr/audits/alerts",
+                  "fr/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "fr/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "fr/policies/editor",
+                  "fr/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "fr/policies/test",
+                  "fr/policies/deploy",
+                  "fr/policies/rollback",
+                  "fr/policies/publish-a-pack",
+                  "fr/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "fr/admin/overview",
+                  "fr/admin/usage",
+                  "fr/admin/keys-and-permissions",
+                  "fr/admin/users-and-organizations",
+                  "fr/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "fr/reference/overview",
+                  "fr/reference/harnesses",
+                  "fr/reference/custom-agents",
+                  "fr/reference/evaluator-sdk",
+                  "fr/reference/policy-sdk",
+                  "fr/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "fr/reference/failproof-cli",
+                  "fr/reference/local-dashboard",
+                  "fr/policies/local-configuration",
+                  "fr/reference/cloud-cli",
+                  "fr/reference/http-api",
+                  "fr/reference/events-and-configuration",
+                  "fr/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "ru",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "ru/index",
+                  "ru/start/quickstart",
+                  "ru/reference/harnesses",
+                  "ru/sessions/assistant",
+                  "ru/start/first-audit",
+                  "ru/start/first-policy",
+                  "ru/start/setup",
+                  "ru/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "ru/start/quickstarts/custom-agents",
+                      "ru/start/quickstarts/langchain",
+                      "ru/start/quickstarts/crewai",
+                      "ru/start/quickstarts/llamaindex",
+                      "ru/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "ru/sessions/overview",
+                  "ru/sessions/live-events",
+                  "ru/sessions/read-a-trace",
+                  "ru/sessions/models",
+                  "ru/sessions/hooks",
+                  "ru/sessions/policy-decisions",
+                  "ru/sessions/tools",
+                  "ru/sessions/errors",
+                  "ru/sessions/metrics",
+                  "ru/sessions/dashboards",
+                  "ru/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "ru/start/integrations",
+                  "ru/start/integrations/custom-agents",
+                  "ru/start/integrations/langchain",
+                  "ru/start/integrations/crewai",
+                  "ru/start/integrations/llamaindex",
+                  "ru/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "ru/evaluations/overview",
+                  "ru/evaluations/write",
+                  "ru/evaluations/test",
+                  "ru/evaluations/deploy",
+                  "ru/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "ru/audits/overview",
+                  "ru/audits/local-audit",
+                  "ru/audits/setup",
+                  "ru/audits/agent-contracts",
+                  "ru/audits/run",
+                  "ru/audits/cadence",
+                  "ru/audits/findings-and-issues",
+                  "ru/audits/alerts",
+                  "ru/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "ru/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "ru/policies/editor",
+                  "ru/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "ru/policies/test",
+                  "ru/policies/deploy",
+                  "ru/policies/rollback",
+                  "ru/policies/publish-a-pack",
+                  "ru/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "ru/admin/overview",
+                  "ru/admin/usage",
+                  "ru/admin/keys-and-permissions",
+                  "ru/admin/users-and-organizations",
+                  "ru/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "ru/reference/overview",
+                  "ru/reference/harnesses",
+                  "ru/reference/custom-agents",
+                  "ru/reference/evaluator-sdk",
+                  "ru/reference/policy-sdk",
+                  "ru/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "ru/reference/failproof-cli",
+                  "ru/reference/local-dashboard",
+                  "ru/policies/local-configuration",
+                  "ru/reference/cloud-cli",
+                  "ru/reference/http-api",
+                  "ru/reference/events-and-configuration",
+                  "ru/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "hi",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "hi/index",
+                  "hi/start/quickstart",
+                  "hi/reference/harnesses",
+                  "hi/sessions/assistant",
+                  "hi/start/first-audit",
+                  "hi/start/first-policy",
+                  "hi/start/setup",
+                  "hi/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "hi/start/quickstarts/custom-agents",
+                      "hi/start/quickstarts/langchain",
+                      "hi/start/quickstarts/crewai",
+                      "hi/start/quickstarts/llamaindex",
+                      "hi/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "hi/sessions/overview",
+                  "hi/sessions/live-events",
+                  "hi/sessions/read-a-trace",
+                  "hi/sessions/models",
+                  "hi/sessions/hooks",
+                  "hi/sessions/policy-decisions",
+                  "hi/sessions/tools",
+                  "hi/sessions/errors",
+                  "hi/sessions/metrics",
+                  "hi/sessions/dashboards",
+                  "hi/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "hi/start/integrations",
+                  "hi/start/integrations/custom-agents",
+                  "hi/start/integrations/langchain",
+                  "hi/start/integrations/crewai",
+                  "hi/start/integrations/llamaindex",
+                  "hi/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "hi/evaluations/overview",
+                  "hi/evaluations/write",
+                  "hi/evaluations/test",
+                  "hi/evaluations/deploy",
+                  "hi/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "hi/audits/overview",
+                  "hi/audits/local-audit",
+                  "hi/audits/setup",
+                  "hi/audits/agent-contracts",
+                  "hi/audits/run",
+                  "hi/audits/cadence",
+                  "hi/audits/findings-and-issues",
+                  "hi/audits/alerts",
+                  "hi/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "hi/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "hi/policies/editor",
+                  "hi/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "hi/policies/test",
+                  "hi/policies/deploy",
+                  "hi/policies/rollback",
+                  "hi/policies/publish-a-pack",
+                  "hi/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "hi/admin/overview",
+                  "hi/admin/usage",
+                  "hi/admin/keys-and-permissions",
+                  "hi/admin/users-and-organizations",
+                  "hi/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "hi/reference/overview",
+                  "hi/reference/harnesses",
+                  "hi/reference/custom-agents",
+                  "hi/reference/evaluator-sdk",
+                  "hi/reference/policy-sdk",
+                  "hi/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "hi/reference/failproof-cli",
+                  "hi/reference/local-dashboard",
+                  "hi/policies/local-configuration",
+                  "hi/reference/cloud-cli",
+                  "hi/reference/http-api",
+                  "hi/reference/events-and-configuration",
+                  "hi/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "tr",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "tr/index",
+                  "tr/start/quickstart",
+                  "tr/reference/harnesses",
+                  "tr/sessions/assistant",
+                  "tr/start/first-audit",
+                  "tr/start/first-policy",
+                  "tr/start/setup",
+                  "tr/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "tr/start/quickstarts/custom-agents",
+                      "tr/start/quickstarts/langchain",
+                      "tr/start/quickstarts/crewai",
+                      "tr/start/quickstarts/llamaindex",
+                      "tr/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "tr/sessions/overview",
+                  "tr/sessions/live-events",
+                  "tr/sessions/read-a-trace",
+                  "tr/sessions/models",
+                  "tr/sessions/hooks",
+                  "tr/sessions/policy-decisions",
+                  "tr/sessions/tools",
+                  "tr/sessions/errors",
+                  "tr/sessions/metrics",
+                  "tr/sessions/dashboards",
+                  "tr/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "tr/start/integrations",
+                  "tr/start/integrations/custom-agents",
+                  "tr/start/integrations/langchain",
+                  "tr/start/integrations/crewai",
+                  "tr/start/integrations/llamaindex",
+                  "tr/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "tr/evaluations/overview",
+                  "tr/evaluations/write",
+                  "tr/evaluations/test",
+                  "tr/evaluations/deploy",
+                  "tr/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "tr/audits/overview",
+                  "tr/audits/local-audit",
+                  "tr/audits/setup",
+                  "tr/audits/agent-contracts",
+                  "tr/audits/run",
+                  "tr/audits/cadence",
+                  "tr/audits/findings-and-issues",
+                  "tr/audits/alerts",
+                  "tr/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "tr/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "tr/policies/editor",
+                  "tr/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "tr/policies/test",
+                  "tr/policies/deploy",
+                  "tr/policies/rollback",
+                  "tr/policies/publish-a-pack",
+                  "tr/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "tr/admin/overview",
+                  "tr/admin/usage",
+                  "tr/admin/keys-and-permissions",
+                  "tr/admin/users-and-organizations",
+                  "tr/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "tr/reference/overview",
+                  "tr/reference/harnesses",
+                  "tr/reference/custom-agents",
+                  "tr/reference/evaluator-sdk",
+                  "tr/reference/policy-sdk",
+                  "tr/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "tr/reference/failproof-cli",
+                  "tr/reference/local-dashboard",
+                  "tr/policies/local-configuration",
+                  "tr/reference/cloud-cli",
+                  "tr/reference/http-api",
+                  "tr/reference/events-and-configuration",
+                  "tr/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "vi",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "vi/index",
+                  "vi/start/quickstart",
+                  "vi/reference/harnesses",
+                  "vi/sessions/assistant",
+                  "vi/start/first-audit",
+                  "vi/start/first-policy",
+                  "vi/start/setup",
+                  "vi/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "vi/start/quickstarts/custom-agents",
+                      "vi/start/quickstarts/langchain",
+                      "vi/start/quickstarts/crewai",
+                      "vi/start/quickstarts/llamaindex",
+                      "vi/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "vi/sessions/overview",
+                  "vi/sessions/live-events",
+                  "vi/sessions/read-a-trace",
+                  "vi/sessions/models",
+                  "vi/sessions/hooks",
+                  "vi/sessions/policy-decisions",
+                  "vi/sessions/tools",
+                  "vi/sessions/errors",
+                  "vi/sessions/metrics",
+                  "vi/sessions/dashboards",
+                  "vi/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "vi/start/integrations",
+                  "vi/start/integrations/custom-agents",
+                  "vi/start/integrations/langchain",
+                  "vi/start/integrations/crewai",
+                  "vi/start/integrations/llamaindex",
+                  "vi/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "vi/evaluations/overview",
+                  "vi/evaluations/write",
+                  "vi/evaluations/test",
+                  "vi/evaluations/deploy",
+                  "vi/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "vi/audits/overview",
+                  "vi/audits/local-audit",
+                  "vi/audits/setup",
+                  "vi/audits/agent-contracts",
+                  "vi/audits/run",
+                  "vi/audits/cadence",
+                  "vi/audits/findings-and-issues",
+                  "vi/audits/alerts",
+                  "vi/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "vi/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "vi/policies/editor",
+                  "vi/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "vi/policies/test",
+                  "vi/policies/deploy",
+                  "vi/policies/rollback",
+                  "vi/policies/publish-a-pack",
+                  "vi/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "vi/admin/overview",
+                  "vi/admin/usage",
+                  "vi/admin/keys-and-permissions",
+                  "vi/admin/users-and-organizations",
+                  "vi/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "vi/reference/overview",
+                  "vi/reference/harnesses",
+                  "vi/reference/custom-agents",
+                  "vi/reference/evaluator-sdk",
+                  "vi/reference/policy-sdk",
+                  "vi/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "vi/reference/failproof-cli",
+                  "vi/reference/local-dashboard",
+                  "vi/policies/local-configuration",
+                  "vi/reference/cloud-cli",
+                  "vi/reference/http-api",
+                  "vi/reference/events-and-configuration",
+                  "vi/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "it",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "it/index",
+                  "it/start/quickstart",
+                  "it/reference/harnesses",
+                  "it/sessions/assistant",
+                  "it/start/first-audit",
+                  "it/start/first-policy",
+                  "it/start/setup",
+                  "it/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "it/start/quickstarts/custom-agents",
+                      "it/start/quickstarts/langchain",
+                      "it/start/quickstarts/crewai",
+                      "it/start/quickstarts/llamaindex",
+                      "it/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "it/sessions/overview",
+                  "it/sessions/live-events",
+                  "it/sessions/read-a-trace",
+                  "it/sessions/models",
+                  "it/sessions/hooks",
+                  "it/sessions/policy-decisions",
+                  "it/sessions/tools",
+                  "it/sessions/errors",
+                  "it/sessions/metrics",
+                  "it/sessions/dashboards",
+                  "it/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "it/start/integrations",
+                  "it/start/integrations/custom-agents",
+                  "it/start/integrations/langchain",
+                  "it/start/integrations/crewai",
+                  "it/start/integrations/llamaindex",
+                  "it/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "it/evaluations/overview",
+                  "it/evaluations/write",
+                  "it/evaluations/test",
+                  "it/evaluations/deploy",
+                  "it/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "it/audits/overview",
+                  "it/audits/local-audit",
+                  "it/audits/setup",
+                  "it/audits/agent-contracts",
+                  "it/audits/run",
+                  "it/audits/cadence",
+                  "it/audits/findings-and-issues",
+                  "it/audits/alerts",
+                  "it/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "it/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "it/policies/editor",
+                  "it/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "it/policies/test",
+                  "it/policies/deploy",
+                  "it/policies/rollback",
+                  "it/policies/publish-a-pack",
+                  "it/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "it/admin/overview",
+                  "it/admin/usage",
+                  "it/admin/keys-and-permissions",
+                  "it/admin/users-and-organizations",
+                  "it/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "it/reference/overview",
+                  "it/reference/harnesses",
+                  "it/reference/custom-agents",
+                  "it/reference/evaluator-sdk",
+                  "it/reference/policy-sdk",
+                  "it/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "it/reference/failproof-cli",
+                  "it/reference/local-dashboard",
+                  "it/policies/local-configuration",
+                  "it/reference/cloud-cli",
+                  "it/reference/http-api",
+                  "it/reference/events-and-configuration",
+                  "it/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "ar",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "ar/index",
+                  "ar/start/quickstart",
+                  "ar/reference/harnesses",
+                  "ar/sessions/assistant",
+                  "ar/start/first-audit",
+                  "ar/start/first-policy",
+                  "ar/start/setup",
+                  "ar/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "ar/start/quickstarts/custom-agents",
+                      "ar/start/quickstarts/langchain",
+                      "ar/start/quickstarts/crewai",
+                      "ar/start/quickstarts/llamaindex",
+                      "ar/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "ar/sessions/overview",
+                  "ar/sessions/live-events",
+                  "ar/sessions/read-a-trace",
+                  "ar/sessions/models",
+                  "ar/sessions/hooks",
+                  "ar/sessions/policy-decisions",
+                  "ar/sessions/tools",
+                  "ar/sessions/errors",
+                  "ar/sessions/metrics",
+                  "ar/sessions/dashboards",
+                  "ar/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "ar/start/integrations",
+                  "ar/start/integrations/custom-agents",
+                  "ar/start/integrations/langchain",
+                  "ar/start/integrations/crewai",
+                  "ar/start/integrations/llamaindex",
+                  "ar/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "ar/evaluations/overview",
+                  "ar/evaluations/write",
+                  "ar/evaluations/test",
+                  "ar/evaluations/deploy",
+                  "ar/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "ar/audits/overview",
+                  "ar/audits/local-audit",
+                  "ar/audits/setup",
+                  "ar/audits/agent-contracts",
+                  "ar/audits/run",
+                  "ar/audits/cadence",
+                  "ar/audits/findings-and-issues",
+                  "ar/audits/alerts",
+                  "ar/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "ar/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "ar/policies/editor",
+                  "ar/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "ar/policies/test",
+                  "ar/policies/deploy",
+                  "ar/policies/rollback",
+                  "ar/policies/publish-a-pack",
+                  "ar/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "ar/admin/overview",
+                  "ar/admin/usage",
+                  "ar/admin/keys-and-permissions",
+                  "ar/admin/users-and-organizations",
+                  "ar/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "ar/reference/overview",
+                  "ar/reference/harnesses",
+                  "ar/reference/custom-agents",
+                  "ar/reference/evaluator-sdk",
+                  "ar/reference/policy-sdk",
+                  "ar/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "ar/reference/failproof-cli",
+                  "ar/reference/local-dashboard",
+                  "ar/policies/local-configuration",
+                  "ar/reference/cloud-cli",
+                  "ar/reference/http-api",
+                  "ar/reference/events-and-configuration",
+                  "ar/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "he",
+        "tabs": [
+          {
+            "tab": "Start",
+            "icon": "rocket",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "he/index",
+                  "he/start/quickstart",
+                  "he/reference/harnesses",
+                  "he/sessions/assistant",
+                  "he/start/first-audit",
+                  "he/start/first-policy",
+                  "he/start/setup",
+                  "he/start/concepts",
+                  {
+                    "group": "Starter templates",
+                    "expanded": false,
+                    "pages": [
+                      "he/start/quickstarts/custom-agents",
+                      "he/start/quickstarts/langchain",
+                      "he/start/quickstarts/crewai",
+                      "he/start/quickstarts/llamaindex",
+                      "he/start/quickstarts/pydantic-ai"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Trace Agents",
+            "icon": "route",
+            "groups": [
+              {
+                "group": "Understand every run",
+                "pages": [
+                  "he/sessions/overview",
+                  "he/sessions/live-events",
+                  "he/sessions/read-a-trace",
+                  "he/sessions/models",
+                  "he/sessions/hooks",
+                  "he/sessions/policy-decisions",
+                  "he/sessions/tools",
+                  "he/sessions/errors",
+                  "he/sessions/metrics",
+                  "he/sessions/dashboards",
+                  "he/sessions/queries"
+                ]
+              },
+              {
+                "group": "Plug in your agent",
+                "pages": [
+                  "he/start/integrations",
+                  "he/start/integrations/custom-agents",
+                  "he/start/integrations/langchain",
+                  "he/start/integrations/crewai",
+                  "he/start/integrations/llamaindex",
+                  "he/start/integrations/pydantic-ai"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Find failures",
+            "icon": "scan-search",
+            "groups": [
+              {
+                "group": "Evaluate agents",
+                "pages": [
+                  "he/evaluations/overview",
+                  "he/evaluations/write",
+                  "he/evaluations/test",
+                  "he/evaluations/deploy",
+                  "he/sessions/evaluations"
+                ]
+              },
+              {
+                "group": "Find and manage failures",
+                "pages": [
+                  "he/audits/overview",
+                  "he/audits/local-audit",
+                  "he/audits/setup",
+                  "he/audits/agent-contracts",
+                  "he/audits/run",
+                  "he/audits/cadence",
+                  "he/audits/findings-and-issues",
+                  "he/audits/alerts",
+                  "he/audits/recipes"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Prevent failures",
+            "icon": "shield-check",
+            "groups": [
+              {
+                "group": "Prevent repeat failures",
+                "pages": [
+                  "he/policies/overview"
+                ]
+              },
+              {
+                "group": "Get a policy",
+                "pages": [
+                  "he/policies/editor",
+                  "he/policies/packs"
+                ]
+              },
+              {
+                "group": "Ship a policy",
+                "pages": [
+                  "he/policies/test",
+                  "he/policies/deploy",
+                  "he/policies/rollback",
+                  "he/policies/publish-a-pack",
+                  "he/policies/failure-behavior"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Admin",
+            "icon": "settings-2",
+            "groups": [
+              {
+                "group": "Operate Failproof AI",
+                "pages": [
+                  "he/admin/overview",
+                  "he/admin/usage",
+                  "he/admin/keys-and-permissions",
+                  "he/admin/users-and-organizations",
+                  "he/admin/settings-and-security"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations and reference",
+            "icon": "braces",
+            "groups": [
+              {
+                "group": "Connect your agents",
+                "pages": [
+                  "he/reference/overview",
+                  "he/reference/harnesses",
+                  "he/reference/custom-agents",
+                  "he/reference/evaluator-sdk",
+                  "he/reference/policy-sdk",
+                  "he/reference/self-hosting"
+                ]
+              },
+              {
+                "group": "Reference",
+                "expanded": false,
+                "pages": [
+                  "he/reference/failproof-cli",
+                  "he/reference/local-dashboard",
+                  "he/policies/local-configuration",
+                  "he/reference/cloud-cli",
+                  "he/reference/http-api",
+                  "he/reference/events-and-configuration",
+                  "he/reference/troubleshooting"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Support",
+          "href": "mailto:support@befailproof.ai",
+          "icon": "mail"
+        }
+      ]
+    }
+  },
+  "api": {
+    "openapi": "reference/openapi.json",
+    "playground": {
+      "display": "simple"
+    },
+    "examples": {
+      "languages": [
+        "curl",
+        "python",
+        "javascript"
+      ]
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/FailproofAI/failproofai",
+      "x": "https://x.com/failproofai"
+    }
+  },
+  "seo": {
+    "indexing": "navigable"
+  },
+  "redirects": [
+    {
+      "source": "/reference/python-sdk",
+      "destination": "/reference/custom-agents"
+    },
+    {
+      "source": "/zh/reference/python-sdk",
+      "destination": "/zh/reference/custom-agents"
+    },
+    {
+      "source": "/ja/reference/python-sdk",
+      "destination": "/ja/reference/custom-agents"
+    },
+    {
+      "source": "/ko/reference/python-sdk",
+      "destination": "/ko/reference/custom-agents"
+    },
+    {
+      "source": "/es/reference/python-sdk",
+      "destination": "/es/reference/custom-agents"
+    },
+    {
+      "source": "/pt-br/reference/python-sdk",
+      "destination": "/pt-br/reference/custom-agents"
+    },
+    {
+      "source": "/de/reference/python-sdk",
+      "destination": "/de/reference/custom-agents"
+    },
+    {
+      "source": "/fr/reference/python-sdk",
+      "destination": "/fr/reference/custom-agents"
+    },
+    {
+      "source": "/ru/reference/python-sdk",
+      "destination": "/ru/reference/custom-agents"
+    },
+    {
+      "source": "/hi/reference/python-sdk",
+      "destination": "/hi/reference/custom-agents"
+    },
+    {
+      "source": "/tr/reference/python-sdk",
+      "destination": "/tr/reference/custom-agents"
+    },
+    {
+      "source": "/vi/reference/python-sdk",
+      "destination": "/vi/reference/custom-agents"
+    },
+    {
+      "source": "/it/reference/python-sdk",
+      "destination": "/it/reference/custom-agents"
+    },
+    {
+      "source": "/ar/reference/python-sdk",
+      "destination": "/ar/reference/custom-agents"
+    },
+    {
+      "source": "/he/reference/python-sdk",
+      "destination": "/he/reference/custom-agents"
+    },
+    {
+      "source": "/start/integrations/how-it-works",
+      "destination": "/start/integrations/custom-agents"
+    },
+    {
+      "source": "/policies/builtin",
+      "destination": "/policies/packs"
+    },
+    {
+      "source": "/zh/policies/builtin",
+      "destination": "/zh/policies/packs"
+    },
+    {
+      "source": "/ja/policies/builtin",
+      "destination": "/ja/policies/packs"
+    },
+    {
+      "source": "/ko/policies/builtin",
+      "destination": "/ko/policies/packs"
+    },
+    {
+      "source": "/es/policies/builtin",
+      "destination": "/es/policies/packs"
+    },
+    {
+      "source": "/pt-br/policies/builtin",
+      "destination": "/pt-br/policies/packs"
+    },
+    {
+      "source": "/de/policies/builtin",
+      "destination": "/de/policies/packs"
+    },
+    {
+      "source": "/fr/policies/builtin",
+      "destination": "/fr/policies/packs"
+    },
+    {
+      "source": "/ru/policies/builtin",
+      "destination": "/ru/policies/packs"
+    },
+    {
+      "source": "/hi/policies/builtin",
+      "destination": "/hi/policies/packs"
+    },
+    {
+      "source": "/tr/policies/builtin",
+      "destination": "/tr/policies/packs"
+    },
+    {
+      "source": "/vi/policies/builtin",
+      "destination": "/vi/policies/packs"
+    },
+    {
+      "source": "/it/policies/builtin",
+      "destination": "/it/policies/packs"
+    },
+    {
+      "source": "/ar/policies/builtin",
+      "destination": "/ar/policies/packs"
+    },
+    {
+      "source": "/he/policies/builtin",
+      "destination": "/he/policies/packs"
+    },
+    {
+      "source": "/policies/builtin-catalog",
+      "destination": "/policies/packs"
+    },
+    {
+      "source": "/zh/policies/builtin-catalog",
+      "destination": "/zh/policies/packs"
+    },
+    {
+      "source": "/ja/policies/builtin-catalog",
+      "destination": "/ja/policies/packs"
+    },
+    {
+      "source": "/ko/policies/builtin-catalog",
+      "destination": "/ko/policies/packs"
+    },
+    {
+      "source": "/es/policies/builtin-catalog",
+      "destination": "/es/policies/packs"
+    },
+    {
+      "source": "/pt-br/policies/builtin-catalog",
+      "destination": "/pt-br/policies/packs"
+    },
+    {
+      "source": "/de/policies/builtin-catalog",
+      "destination": "/de/policies/packs"
+    },
+    {
+      "source": "/fr/policies/builtin-catalog",
+      "destination": "/fr/policies/packs"
+    },
+    {
+      "source": "/ru/policies/builtin-catalog",
+      "destination": "/ru/policies/packs"
+    },
+    {
+      "source": "/hi/policies/builtin-catalog",
+      "destination": "/hi/policies/packs"
+    },
+    {
+      "source": "/tr/policies/builtin-catalog",
+      "destination": "/tr/policies/packs"
+    },
+    {
+      "source": "/vi/policies/builtin-catalog",
+      "destination": "/vi/policies/packs"
+    },
+    {
+      "source": "/it/policies/builtin-catalog",
+      "destination": "/it/policies/packs"
+    },
+    {
+      "source": "/ar/policies/builtin-catalog",
+      "destination": "/ar/policies/packs"
+    },
+    {
+      "source": "/he/policies/builtin-catalog",
+      "destination": "/he/policies/packs"
+    },
+    {
+      "source": "/policies/custom",
+      "destination": "/policies/editor"
+    },
+    {
+      "source": "/zh/policies/custom",
+      "destination": "/zh/policies/editor"
+    },
+    {
+      "source": "/ja/policies/custom",
+      "destination": "/ja/policies/editor"
+    },
+    {
+      "source": "/ko/policies/custom",
+      "destination": "/ko/policies/editor"
+    },
+    {
+      "source": "/es/policies/custom",
+      "destination": "/es/policies/editor"
+    },
+    {
+      "source": "/pt-br/policies/custom",
+      "destination": "/pt-br/policies/editor"
+    },
+    {
+      "source": "/de/policies/custom",
+      "destination": "/de/policies/editor"
+    },
+    {
+      "source": "/fr/policies/custom",
+      "destination": "/fr/policies/editor"
+    },
+    {
+      "source": "/ru/policies/custom",
+      "destination": "/ru/policies/editor"
+    },
+    {
+      "source": "/hi/policies/custom",
+      "destination": "/hi/policies/editor"
+    },
+    {
+      "source": "/tr/policies/custom",
+      "destination": "/tr/policies/editor"
+    },
+    {
+      "source": "/vi/policies/custom",
+      "destination": "/vi/policies/editor"
+    },
+    {
+      "source": "/it/policies/custom",
+      "destination": "/it/policies/editor"
+    },
+    {
+      "source": "/ar/policies/custom",
+      "destination": "/ar/policies/editor"
+    },
+    {
+      "source": "/he/policies/custom",
+      "destination": "/he/policies/editor"
+    },
+    {
+      "source": "/policies/fleet",
+      "destination": "/policies/deploy"
+    },
+    {
+      "source": "/zh/policies/fleet",
+      "destination": "/zh/policies/deploy"
+    },
+    {
+      "source": "/ja/policies/fleet",
+      "destination": "/ja/policies/deploy"
+    },
+    {
+      "source": "/ko/policies/fleet",
+      "destination": "/ko/policies/deploy"
+    },
+    {
+      "source": "/es/policies/fleet",
+      "destination": "/es/policies/deploy"
+    },
+    {
+      "source": "/pt-br/policies/fleet",
+      "destination": "/pt-br/policies/deploy"
+    },
+    {
+      "source": "/de/policies/fleet",
+      "destination": "/de/policies/deploy"
+    },
+    {
+      "source": "/fr/policies/fleet",
+      "destination": "/fr/policies/deploy"
+    },
+    {
+      "source": "/ru/policies/fleet",
+      "destination": "/ru/policies/deploy"
+    },
+    {
+      "source": "/hi/policies/fleet",
+      "destination": "/hi/policies/deploy"
+    },
+    {
+      "source": "/tr/policies/fleet",
+      "destination": "/tr/policies/deploy"
+    },
+    {
+      "source": "/vi/policies/fleet",
+      "destination": "/vi/policies/deploy"
+    },
+    {
+      "source": "/it/policies/fleet",
+      "destination": "/it/policies/deploy"
+    },
+    {
+      "source": "/ar/policies/fleet",
+      "destination": "/ar/policies/deploy"
+    },
+    {
+      "source": "/he/policies/fleet",
+      "destination": "/he/policies/deploy"
+    },
+    {
+      "source": "/built-in-policies",
+      "destination": "/policies/packs"
+    },
+    {
+      "source": "/zh/built-in-policies",
+      "destination": "/zh/policies/packs"
+    },
+    {
+      "source": "/ja/built-in-policies",
+      "destination": "/ja/policies/packs"
+    },
+    {
+      "source": "/ko/built-in-policies",
+      "destination": "/ko/policies/packs"
+    },
+    {
+      "source": "/es/built-in-policies",
+      "destination": "/es/policies/packs"
+    },
+    {
+      "source": "/pt-br/built-in-policies",
+      "destination": "/pt-br/policies/packs"
+    },
+    {
+      "source": "/de/built-in-policies",
+      "destination": "/de/policies/packs"
+    },
+    {
+      "source": "/fr/built-in-policies",
+      "destination": "/fr/policies/packs"
+    },
+    {
+      "source": "/ru/built-in-policies",
+      "destination": "/ru/policies/packs"
+    },
+    {
+      "source": "/hi/built-in-policies",
+      "destination": "/hi/policies/packs"
+    },
+    {
+      "source": "/tr/built-in-policies",
+      "destination": "/tr/policies/packs"
+    },
+    {
+      "source": "/vi/built-in-policies",
+      "destination": "/vi/policies/packs"
+    },
+    {
+      "source": "/it/built-in-policies",
+      "destination": "/it/policies/packs"
+    },
+    {
+      "source": "/ar/built-in-policies",
+      "destination": "/ar/policies/packs"
+    },
+    {
+      "source": "/he/built-in-policies",
+      "destination": "/he/policies/packs"
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+/**
+ * Shared launch logic for dev.ts and start.ts.
+ */
+import { spawn } from "child_process";
+import { realpathSync, existsSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
+import { parseScriptArgs } from "./parse-script-args";
+import { diagnoseShadow } from "./install-diagnosis.mjs";
+import { makeSkewLogFilter } from "./skew-log-filter";
+import { renderLaunchBanner } from "../src/hooks/tui";
+import { isLoopbackHostname, resolveDashboardHost } from "../lib/dashboard-host";
+import { version } from "../package.json";
+
+export function launch(mode: "dev" | "start"): void {
+  const { loggingLevel, disableTelemetry, allowedDevOrigins, host, remainingArgs } = parseScriptArgs(process.argv.slice(2));
+
+  // Branded splash — the same logomark + palette as the `configure` wizard, then
+  // a tidy version/links column. Falls back to plain text off a TTY.
+  for (const line of renderLaunchBanner(version)) console.log(line);
+
+  // The dashboard has no authentication and can toggle policies and uninstall
+  // hooks from every agent CLI, so it binds loopback unless someone asks
+  // otherwise. It used to bind 0.0.0.0 unconditionally, which handed all of
+  // that to every peer on the network.
+  const bindHost = resolveDashboardHost(host, process.env.FAILPROOFAI_DASHBOARD_HOST);
+  if (!isLoopbackHostname(bindHost)) {
+    console.warn(
+      `\n! Binding the dashboard to ${bindHost}, which is reachable from outside this machine.\n` +
+      `  It has no authentication: anyone who can reach it can read your session\n` +
+      `  transcripts, disable your policies, and uninstall failproofai's hooks.\n`,
+    );
+  }
+  // Read back by proxy.ts, which refuses any request whose Host is not one it
+  // should be answering to — the layer that stops DNS rebinding, which a
+  // loopback bind alone does not.
+  process.env.FAILPROOFAI_DASHBOARD_HOST = bindHost;
+
+  let cmd: string;
+  let cmdArgs: string[];
+  if (mode === "start") {
+    const portIdx = remainingArgs.indexOf("--port");
+    const port = portIdx >= 0 ? remainingArgs[portIdx + 1] : "8020";
+    process.env.PORT = port;
+    process.env.HOSTNAME = bindHost;
+    cmd = "node";
+    // Resolve the real package root via realpathSync so symlinked npm global binaries
+    // don't cause import.meta.url to point at the symlink dir instead of the package dir.
+    const packageRoot = process.env.FAILPROOFAI_PACKAGE_ROOT
+      ?? resolve(dirname(realpathSync(fileURLToPath(import.meta.url))), "..");
+    const serverJsPath = resolve(packageRoot, ".next/standalone/server.js");
+    if (!existsSync(serverJsPath)) {
+      // Most "missing server.js" reports come from a PATH shadow (an older
+      // `bun link` or a `bun install -g` whose prefix wins over npm), not from
+      // a genuinely broken build. Diagnose first so the error message names
+      // the actual cause when that's what's going on.
+      let shadowMessage: string | null = null;
+      try {
+        const diag = diagnoseShadow({ selfPackageRoot: packageRoot, selfVersion: version });
+        if (diag.shadowed) {
+          // Pick whichever alternate install exists at npm/bun globals AND
+          // differs from PATH-first. In the runtime stale-binary scenario the
+          // running install IS the PATH-first one, so we'd otherwise point the
+          // user back at themselves.
+          const alt =
+            (diag.npmGlobalPath && diag.npmGlobalPath !== diag.pathFirstPath
+              ? { path: diag.npmGlobalPath, version: diag.npmGlobalVersion }
+              : null)
+            ?? (diag.bunGlobalPath && diag.bunGlobalPath !== diag.pathFirstPath
+              ? { path: diag.bunGlobalPath, version: diag.bunGlobalVersion }
+              : null);
+          const newer = alt?.path ?? "(unknown)";
+          const newerVer = alt?.version ?? "?";
+          shadowMessage =
+            `\nError: failproofai on your PATH is a stale install that no longer has its build output.\n` +
+            `  Running:    ${diag.pathFirstPath}` + (diag.pathFirstVersion ? `  (v${diag.pathFirstVersion})` : "") + `\n` +
+            `  Newer copy: ${newer}  (v${newerVer})\n\n` +
+            `Remove the shadow with:\n  ${diag.recommendation}\n`;
+        }
+      } catch {
+        // Diagnosis is best-effort; fall back to the original message.
+      }
+      console.error(
+        shadowMessage ??
+        `\nError: Cannot find server.js at:\n  ${serverJsPath}\n\n` +
+        `The package may be missing its build output.\n` +
+        `Try reinstalling:\n  npm install -g failproofai@latest\n`
+      );
+      process.exit(1);
+    }
+    cmdArgs = [serverJsPath];
+  } else {
+    cmd = "bunx";
+    // `next dev` with no -H listens on every interface too, so dev gets the same
+    // default. Skipped when the caller already passed one through, so an
+    // explicit -H in remainingArgs still wins.
+    const hasHostFlag = remainingArgs.some((a) => a === "-H" || a === "--hostname" || a.startsWith("--hostname="));
+    cmdArgs = ["--bun", "next", "dev", ...(hasHostFlag ? [] : ["-H", bindHost]), ...remainingArgs];
+  }
+
+  // In `start` (the shipped standalone server) we pipe + filter the child's
+  // output to drop the benign "Failed to find Server Action" deployment-skew
+  // block — a stale browser tab POSTing an old action ID after a rebuild, which
+  // the client recovers from via Next's graceful 404 (see skew-log-filter.ts).
+  // `dev` keeps "inherit" so Next's interactive compile output is untouched.
+  // FORCE_COLOR keeps the piped child's output colored despite the non-TTY pipe.
+  const filterLogs = mode === "start";
+
+  const nextProcess = spawn(cmd, cmdArgs, {
+    stdio: filterLogs ? ["inherit", "pipe", "pipe"] : "inherit",
+    env: {
+      ...process.env,
+      // `.next/standalone/server.js` does `process.chdir(__dirname)` on its
+      // first line, so by the time a server action runs, `process.cwd()` is the
+      // PACKAGE directory, not the directory the user launched from. Anything
+      // resolving project-scope paths from cwd would look inside the installed
+      // package and find nothing. Capture the real cwd here, before the child
+      // starts, the same way FAILPROOFAI_PACKAGE_ROOT is threaded through.
+      FAILPROOFAI_LAUNCH_CWD: process.env.FAILPROOFAI_LAUNCH_CWD ?? process.cwd(),
+      ...(filterLogs ? { FORCE_COLOR: process.env.FORCE_COLOR ?? "1" } : {}),
+      ...(loggingLevel ? { FAILPROOFAI_LOG_LEVEL: loggingLevel } : {}),
+      ...(disableTelemetry ? { FAILPROOFAI_TELEMETRY_DISABLED: "1" } : {}),
+      ...(allowedDevOrigins ? { FAILPROOFAI_ALLOWED_DEV_ORIGINS: allowedDevOrigins.join(",") } : {}),
+    },
+  });
+
+  if (filterLogs) {
+    // One filter instance per stream — the skew block is multi-line and stateful.
+    for (const [src, dest] of [
+      [nextProcess.stdout, process.stdout],
+      [nextProcess.stderr, process.stderr],
+    ] as const) {
+      if (!src) continue;
+      const filter = makeSkewLogFilter();
+      createInterface({ input: src }).on("line", (line) => {
+        const out = filter(line);
+        if (out !== null) dest.write(out + "\n");
+      });
+    }
+  }
+
+  nextProcess.on("error", (error) => {
+    console.error("Error starting Next.js:", error);
+    process.exit(1);
+  });
+
+  nextProcess.on("exit", (code) => {
+    process.exit(code || 0);
+  });
+}

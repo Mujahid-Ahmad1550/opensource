@@ -1,0 +1,277 @@
+/**
+ * Read/write the hooks configuration file at ~/.failproofai/policies-config.json.
+ */
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { homedir } from "node:os";
+import type { HooksConfig, ConventionPolicyRecord } from "./policy-types";
+import type { HookScope } from "./types";
+import { hookLogInfo, hookLogWarn } from "./hook-logger";
+import { globalPolicyConfigFile } from "./fp-home";
+
+/** Normalize plural and legacy singular explicit policy paths for consumers. */
+export function configuredCustomPolicyPaths(
+  config: Pick<HooksConfig, "customPoliciesPaths" | "customPoliciesPath">,
+): string[] {
+  return config.customPoliciesPaths ?? (config.customPoliciesPath ? [config.customPoliciesPath] : []);
+}
+
+function readConfigAt(path: string): Partial<HooksConfig> {
+  if (!existsSync(path)) return {};
+  try {
+    const raw = readFileSync(path, "utf8");
+    return JSON.parse(raw) as Partial<HooksConfig>;
+  } catch (err) {
+    hookLogWarn(`failed to parse config at ${path}: ${err instanceof Error ? err.message : String(err)}`);
+    return {};
+  }
+}
+
+/**
+ * Walk up from `start` until a `.failproofai/` directory is found, and return that
+ * dir as the project root. Stops at homedir (the global `~/.failproofai/` is not a
+ * project root) or filesystem root. If no marker is found, returns the original
+ * `start` so callers fall through to the global-only config merge.
+ *
+ * Fixes #200: when Claude Code's Bash tool drifts CWD into a subdirectory, the
+ * project policy config was silently missed because we resolved it at the exact
+ * cwd instead of walking up.
+ */
+export function findProjectConfigDir(start: string): string {
+  const home = homedir();
+  let dir = resolve(start);
+  while (dir !== home) {
+    const marker = resolve(dir, ".failproofai");
+    try {
+      if (statSync(marker).isDirectory()) return dir;
+    } catch {
+      // not present or unreadable — keep walking
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return resolve(start);
+}
+
+/**
+ * Read and merge hooks config from three scopes in priority order:
+ *   1. {cwd}/.failproofai/policies-config.json        (project)
+ *   2. {cwd}/.failproofai/policies-config.local.json  (local)
+ *   3. ~/.failproofai/policies-config.json             (global)
+ *
+ * Merge rules:
+ *   enabledPolicies: union + dedup across all three
+ *   policyParams:    per-policy key, first scope that defines it wins entirely
+ *   customPoliciesPaths/customPoliciesPath: first scope defining either wins
+ *   llm:            first scope that defines it wins
+ */
+export function readMergedHooksConfig(cwd?: string): HooksConfig {
+  const base = findProjectConfigDir(cwd ?? process.cwd());
+  const projectPath = resolve(base, ".failproofai", "policies-config.json");
+  const localPath = resolve(base, ".failproofai", "policies-config.local.json");
+  const globalPath = globalPolicyConfigFile();
+
+  const project = readConfigAt(projectPath);
+  const local = readConfigAt(localPath);
+  const global_ = readConfigAt(globalPath);
+
+  // enabledPolicies: union + dedup
+  const enabledSet = new Set<string>([
+    ...(project.enabledPolicies ?? []),
+    ...(local.enabledPolicies ?? []),
+    ...(global_.enabledPolicies ?? []),
+  ]);
+
+  // policyParams: per-policy, first scope wins
+  const mergedParams: Record<string, Record<string, unknown>> = {};
+  for (const scope of [project, local, global_]) {
+    if (!scope.policyParams) continue;
+    for (const [policyName, params] of Object.entries(scope.policyParams)) {
+      if (!(policyName in mergedParams)) {
+        mergedParams[policyName] = params;
+      }
+    }
+  }
+
+  // Explicit custom policy paths: first scope defining either the current
+  // array form or the legacy singular form wins.
+  const customPoliciesPaths = [project, local, global_]
+    .map((scope) =>
+      scope.customPoliciesPaths !== undefined
+        ? scope.customPoliciesPaths
+        : scope.customPoliciesPath !== undefined
+          ? [scope.customPoliciesPath]
+          : undefined,
+    )
+    .find((paths) => paths !== undefined);
+
+  const disabledCustomPolicies = new Set<string>([
+    ...(project.disabledCustomPolicies ?? []),
+    ...(local.disabledCustomPolicies ?? []),
+    ...(global_.disabledCustomPolicies ?? []),
+  ]);
+
+  const customPoliciesEnabled =
+    project.customPoliciesEnabled ?? local.customPoliciesEnabled ?? global_.customPoliciesEnabled;
+
+  // llm: first scope wins
+  const llm = project.llm ?? local.llm ?? global_.llm;
+
+  return {
+    enabledPolicies: [...enabledSet],
+    ...(Object.keys(mergedParams).length > 0 ? { policyParams: mergedParams } : {}),
+    ...(customPoliciesPaths !== undefined ? { customPoliciesPaths } : {}),
+    ...(disabledCustomPolicies.size ? { disabledCustomPolicies: [...disabledCustomPolicies] } : {}),
+    ...(customPoliciesEnabled !== undefined ? { customPoliciesEnabled } : {}),
+    ...(llm !== undefined ? { llm } : {}),
+  };
+}
+
+function getConfigPath(): string {
+  return globalPolicyConfigFile();
+}
+
+export function readHooksConfig(): HooksConfig {
+  const configPath = getConfigPath();
+  if (!existsSync(configPath)) {
+    return { enabledPolicies: [] };
+  }
+  try {
+    const raw = readFileSync(configPath, "utf8");
+    return JSON.parse(raw) as HooksConfig;
+  } catch (err) {
+    hookLogWarn(`failed to parse config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
+    return { enabledPolicies: [] };
+  }
+}
+
+export function writeHooksConfig(config: HooksConfig): void {
+  const configPath = getConfigPath();
+  const dir = dirname(configPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+}
+
+/**
+ * Resolve the policies-config path for a specific scope.
+ */
+export function getConfigPathForScope(scope: HookScope, cwd?: string): string {
+  switch (scope) {
+    case "user":
+      return globalPolicyConfigFile();
+    case "project":
+      return resolve(findProjectConfigDir(cwd ?? process.cwd()), ".failproofai", "policies-config.json");
+    case "local":
+      return resolve(findProjectConfigDir(cwd ?? process.cwd()), ".failproofai", "policies-config.local.json");
+  }
+}
+
+/**
+ * Read hooks config from a single specific scope (not merged).
+ */
+export function readScopedHooksConfig(scope: HookScope, cwd?: string): HooksConfig {
+  const configPath = getConfigPathForScope(scope, cwd);
+  if (!existsSync(configPath)) {
+    return { enabledPolicies: [] };
+  }
+  try {
+    const raw = readFileSync(configPath, "utf8");
+    return JSON.parse(raw) as HooksConfig;
+  } catch (err) {
+    hookLogWarn(`failed to parse config at ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
+    return { enabledPolicies: [] };
+  }
+}
+
+/**
+ * Write hooks config to the scope-appropriate path.
+ */
+export function writeScopedHooksConfig(config: HooksConfig, scope: HookScope, cwd?: string): void {
+  const configPath = getConfigPathForScope(scope, cwd);
+  const dir = dirname(configPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+}
+
+/**
+ * Mirror the convention policies discovered at `scope` into that scope's
+ * config file, so `policies-config.json` shows what is installed rather than
+ * only what was explicitly enabled.
+ *
+ * Wholesale replace, not merge: the point is to reflect the directory as it is
+ * now, so a deleted file must vanish from the record. Writes only when the
+ * value actually changes, so repeated `failproofai policies` runs do not
+ * rewrite the file (and do not churn its mtime) for no reason.
+ *
+ * Callers must be one-shot commands. This is never safe to call from the hook
+ * path — see the `conventionPolicies` doc comment on `HooksConfig`.
+ *
+ * Returns true when the file was written.
+ */
+export function syncConventionPolicies(
+  entries: ConventionPolicyRecord[],
+  scope: HookScope,
+  cwd?: string,
+): boolean {
+  const configPath = getConfigPathForScope(scope, cwd);
+
+  // Never bring a config file into existence just to record an empty list —
+  // that would litter every directory the CLI is run from.
+  if (!existsSync(configPath) && entries.length === 0) return false;
+
+  // NEVER write over a file we could not parse. `readScopedHooksConfig` fails
+  // soft, returning `{enabledPolicies: []}` on a syntax error — correct for the
+  // hook path, which must not die because a config is malformed, but fatal
+  // here: writing that default back silently DESTROYS the user's real settings.
+  // A hand-edited file with one stray comma would lose every enabled policy the
+  // moment someone ran `failproofai policies`, a read-only command. Bail and
+  // leave the file exactly as it is; the parse warning already surfaced.
+  if (existsSync(configPath)) {
+    try {
+      JSON.parse(readFileSync(configPath, "utf8"));
+    } catch {
+      hookLogWarn(
+        `not recording convention policies: ${configPath} is not valid JSON — ` +
+          `fix the syntax error and re-run. Nothing was written.`,
+      );
+      return false;
+    }
+  }
+
+  const config = readScopedHooksConfig(scope, cwd);
+  const sorted = [...entries].sort((a, b) => a.file.localeCompare(b.file));
+  const next: HooksConfig = { ...config };
+  if (sorted.length === 0) delete next.conventionPolicies;
+  else next.conventionPolicies = sorted;
+
+  if (JSON.stringify(next.conventionPolicies ?? null) === JSON.stringify(config.conventionPolicies ?? null)) {
+    return false;
+  }
+  writeScopedHooksConfig(next, scope, cwd);
+  return true;
+}
+
+export interface ResolvedLlmConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export function readLlmConfig(cwd?: string): ResolvedLlmConfig | null {
+  const config = readMergedHooksConfig(cwd);
+  const baseUrl =
+    process.env.FAILPROOFAI_LLM_BASE_URL ?? config.llm?.baseUrl ?? "https://api.openai.com/v1";
+  const apiKey = process.env.FAILPROOFAI_LLM_API_KEY ?? config.llm?.apiKey;
+  const model = process.env.FAILPROOFAI_LLM_MODEL ?? config.llm?.model ?? "gpt-4o-mini";
+  const apiKeySource = process.env.FAILPROOFAI_LLM_API_KEY ? "env" : config.llm?.apiKey ? "file" : "missing";
+  const baseUrlSource = process.env.FAILPROOFAI_LLM_BASE_URL ? "env" : config.llm?.baseUrl ? "file" : "default";
+  const modelSource = process.env.FAILPROOFAI_LLM_MODEL ? "env" : config.llm?.model ? "file" : "default";
+  hookLogInfo(`llm-config: apiKey=${apiKeySource} baseUrl=${baseUrlSource}(${baseUrl}) model=${modelSource}(${model})`);
+  if (!apiKey) return null;
+  return { baseUrl, apiKey, model };
+}
